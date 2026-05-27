@@ -3,32 +3,31 @@
 
 /* =================================================================
    FlowAgent Studio — visual workflow builder for Frappe
-   Aesthetic: refined dark with electric indigo accent
+   Default: refined light. Dark via [data-theme="dark"].
    Typography: Geist (body) + Geist Mono (code surfaces)
    ================================================================= */
 
-/* -----------------------------------------------------------------
-   Font loading — Geist + Geist Mono via Google Fonts
-   ----------------------------------------------------------------- */
+/* External resources */
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css');
 
 #fa-app {
-    /* Core palette */
-    --fa-bg: #0A0A0B;
-    --fa-surface: #131316;
-    --fa-surface-2: #1B1B1F;
-    --fa-surface-3: #232328;
-    --fa-border: #2A2A30;
-    --fa-border-strong: #3A3A42;
-    --fa-text: #F5F5F7;
-    --fa-text-dim: #A1A1AA;
-    --fa-text-mute: #71717A;
+    /* Core palette — LIGHT */
+    --fa-bg: #FAFAF9;
+    --fa-surface: #FFFFFF;
+    --fa-surface-2: #F4F4F5;
+    --fa-surface-3: #E4E4E7;
+    --fa-border: #E4E4E7;
+    --fa-border-strong: #D4D4D8;
+    --fa-text: #18181B;
+    --fa-text-dim: #52525B;
+    --fa-text-mute: #A1A1AA;
 
     /* Accent */
-    --fa-accent: #818CF8;
-    --fa-accent-hot: #6366F1;
-    --fa-accent-dim: rgba(129, 140, 248, 0.12);
-    --fa-accent-edge: rgba(129, 140, 248, 0.35);
+    --fa-accent: #6366F1;
+    --fa-accent-hot: #4F46E5;
+    --fa-accent-dim: rgba(99, 102, 241, 0.08);
+    --fa-accent-edge: rgba(99, 102, 241, 0.25);
 
     /* Category palette */
     --fa-cat-trigger: #F59E0B;
@@ -37,12 +36,6 @@
     --fa-cat-frappe: #38BDF8;
     --fa-cat-integration: #F472B6;
     --fa-cat-transform: #94A3B8;
-    --fa-cat-trigger-bg: rgba(245, 158, 11, 0.12);
-    --fa-cat-ai-bg: rgba(16, 185, 129, 0.12);
-    --fa-cat-logic-bg: rgba(251, 146, 60, 0.12);
-    --fa-cat-frappe-bg: rgba(56, 189, 248, 0.12);
-    --fa-cat-integration-bg: rgba(244, 114, 182, 0.12);
-    --fa-cat-transform-bg: rgba(148, 163, 184, 0.12);
 
     /* Status */
     --fa-success: #10B981;
@@ -73,8 +66,8 @@
     content: '';
     position: absolute; inset: 0;
     background:
-        radial-gradient(ellipse 800px 400px at 20% -10%, rgba(99, 102, 241, 0.08), transparent 50%),
-        radial-gradient(ellipse 600px 300px at 90% 110%, rgba(16, 185, 129, 0.05), transparent 50%);
+        radial-gradient(ellipse 800px 400px at 20% -10%, rgba(99, 102, 241, 0.04), transparent 50%),
+        radial-gradient(ellipse 600px 300px at 90% 110%, rgba(16, 185, 129, 0.03), transparent 50%);
     pointer-events: none; z-index: 0;
 }
 #fa-app > * { position: relative; z-index: 1; }
@@ -84,8 +77,8 @@
    ================================================================= */
 .fa-topbar {
     display: flex; align-items: center; gap: 10px;
-    padding: 0 18px; height: 52px;
-    background: rgba(19, 19, 22, 0.85);
+    padding: 0 18px; height: 54px;
+    background: rgba(255, 255, 255, 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--fa-border);
@@ -109,25 +102,25 @@
     color: var(--fa-text);
 }
 .fa-brand-mark {
-    width: 22px; height: 22px;
-    border-radius: 6px;
+    width: 24px; height: 24px;
+    border-radius: 7px;
     background: linear-gradient(135deg, var(--fa-accent-hot), #A855F7);
     display: flex; align-items: center; justify-content: center;
-    color: white; font-size: 11px;
+    color: white;
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.06),
-        0 4px 12px rgba(99, 102, 241, 0.35);
+        0 0 0 1px rgba(0, 0, 0, 0.05),
+        0 4px 12px rgba(99, 102, 241, 0.3);
 }
-.fa-brand-mark i { font-size: 13px; }
+.fa-brand-mark i { font-size: 14px; }
 .fa-brand-tag {
     font-size: 10px;
     font-family: var(--fa-font-mono);
-    font-weight: 500;
-    padding: 2px 7px;
-    border-radius: 4px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 5px;
     background: var(--fa-accent-dim);
-    color: var(--fa-accent);
-    letter-spacing: 0.04em;
+    color: var(--fa-accent-hot);
+    letter-spacing: 0.06em;
     text-transform: uppercase;
 }
 
@@ -139,13 +132,13 @@
 
 .fa-tb-btn {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 12px;
+    padding: 7px 12px;
     border-radius: 7px;
     border: 1px solid transparent;
     background: transparent;
     color: var(--fa-text-dim);
     font-family: var(--fa-font);
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.12s ease;
@@ -158,65 +151,77 @@
     color: var(--fa-text);
 }
 .fa-tb-btn:active { transform: translateY(0.5px); }
-.fa-tb-btn i { font-size: 14px; }
+.fa-tb-btn i { font-size: 16px; }
+/* Icon-only buttons need a min width so they don't collapse */
+.fa-tb-btn:has(> i:only-child),
+.fa-tb-icon-only {
+    padding: 7px 9px;
+    min-width: 34px;
+    justify-content: center;
+}
 
 .fa-tb-btn.fa-run {
     background: var(--fa-accent-hot);
     color: #fff;
     font-weight: 600;
     border-color: var(--fa-accent-hot);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 4px 12px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 4px 12px rgba(79, 70, 229, 0.3);
 }
 .fa-tb-btn.fa-run:hover {
-    background: #5558E8;
-    border-color: #5558E8;
+    background: #4338CA;
+    border-color: #4338CA;
+    color: #fff;
 }
 
 .fa-tb-toggle {
     display: inline-flex; align-items: center; gap: 7px;
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--fa-text-dim);
     cursor: pointer;
-    padding: 6px 10px;
+    padding: 7px 11px;
     border-radius: 7px;
-    transition: background 0.12s;
+    border: 1px solid transparent;
+    transition: all 0.12s;
 }
-.fa-tb-toggle:hover { background: var(--fa-surface-2); }
+.fa-tb-toggle:hover {
+    background: var(--fa-surface-2);
+    border-color: var(--fa-border);
+}
 .fa-tb-toggle input { accent-color: var(--fa-accent-hot); }
 
 .fa-trigger-pill {
     font-family: var(--fa-font-mono);
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 500;
-    padding: 4px 10px;
+    padding: 5px 11px;
     border-radius: 20px;
     border: 1px solid var(--fa-border);
-    background: var(--fa-surface-2);
+    background: var(--fa-surface);
     color: var(--fa-text-dim);
     letter-spacing: -0.005em;
     white-space: nowrap;
 }
 .fa-trigger-on {
     background: rgba(16, 185, 129, 0.1);
-    color: var(--fa-success);
-    border-color: rgba(16, 185, 129, 0.25);
+    color: #047857;
+    border-color: rgba(16, 185, 129, 0.3);
 }
 .fa-trigger-warn {
     background: rgba(245, 158, 11, 0.1);
-    color: var(--fa-warn);
-    border-color: rgba(245, 158, 11, 0.25);
+    color: #B45309;
+    border-color: rgba(245, 158, 11, 0.3);
 }
 
 .fa-spacer { flex: 1; }
 
 #fa-wf-name {
     font-family: var(--fa-font);
-    font-size: 13px; font-weight: 500;
+    font-size: 13.5px; font-weight: 500;
     color: var(--fa-text);
     margin-right: 10px;
     cursor: pointer;
-    padding: 4px 10px;
-    border-radius: 6px;
+    padding: 5px 11px;
+    border-radius: 7px;
     border: 1px solid transparent;
     transition: all 0.12s;
 }
@@ -277,11 +282,11 @@
 
 .fa-node-chip {
     display: flex; align-items: center; gap: 9px;
-    padding: 7px 10px;
+    padding: 8px 11px;
     margin-bottom: 4px;
     border-radius: 7px;
-    border: 1px solid transparent;
-    background: var(--fa-surface-2);
+    border: 1px solid var(--fa-border);
+    background: var(--fa-surface);
     font-size: 12.5px;
     color: var(--fa-text-dim);
     cursor: grab;
@@ -290,16 +295,15 @@
 }
 .fa-node-chip:hover {
     color: var(--fa-text);
-    background: var(--fa-surface-3);
+    background: var(--fa-surface-2);
     border-color: var(--fa-border-strong);
     transform: translateX(2px);
 }
 .fa-node-chip:active { cursor: grabbing; }
 .fa-dot {
-    width: 7px; height: 7px;
+    width: 8px; height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    box-shadow: 0 0 6px currentColor;
 }
 
 /* =================================================================
@@ -315,10 +319,25 @@
     position: absolute; inset: 0;
     pointer-events: none;
     background-image:
-        radial-gradient(circle at center, rgba(255, 255, 255, 0.05) 1px, transparent 1.5px);
+        radial-gradient(circle at center, rgba(0, 0, 0, 0.08) 1px, transparent 1.5px);
     background-size: 22px 22px;
     mask-image: radial-gradient(ellipse at center, black 60%, transparent 100%);
+    transform-origin: 0 0;
+    transition: transform 0.05s ease-out;
 }
+
+/* The transformable layer — holds nodes and edges. Zoom + pan applied here. */
+.fa-canvas-stage {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    transform-origin: 0 0;
+    transition: transform 0.05s ease-out;
+    will-change: transform;
+}
+.fa-canvas-stage.fa-panning { cursor: grabbing !important; }
+.fa-canvas-wrap.fa-space-down { cursor: grab; }
+
 #fa-canvas {
     position: absolute;
     top: 0; left: 0;
@@ -343,7 +362,6 @@
     stroke-width: 2;
     stroke-dasharray: 6 4;
     animation: fa-dash 0.7s linear infinite;
-    filter: drop-shadow(0 0 6px var(--fa-accent-edge));
 }
 .fa-edge-preview {
     stroke: var(--fa-accent);
@@ -360,31 +378,32 @@
     text-align: center;
     pointer-events: none;
     max-width: 380px;
+    z-index: 1;
 }
 .fa-empty-mark {
-    width: 56px; height: 56px;
-    margin: 0 auto 18px;
-    border-radius: 14px;
+    width: 60px; height: 60px;
+    margin: 0 auto 20px;
+    border-radius: 16px;
     background: linear-gradient(135deg, var(--fa-accent-hot), #A855F7);
     display: flex; align-items: center; justify-content: center;
     color: white;
-    font-size: 26px;
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.08),
-        0 12px 32px rgba(99, 102, 241, 0.3);
+        0 0 0 1px rgba(0, 0, 0, 0.05),
+        0 16px 36px rgba(99, 102, 241, 0.3);
 }
+.fa-empty-mark i { font-size: 28px; }
 .fa-empty h2 {
     font-family: var(--fa-font);
     font-weight: 600;
-    font-size: 20px;
+    font-size: 22px;
     color: var(--fa-text);
-    margin: 0 0 6px;
+    margin: 0 0 8px;
     letter-spacing: -0.02em;
 }
 .fa-empty p {
-    font-size: 13px;
+    font-size: 13.5px;
     color: var(--fa-text-dim);
-    margin: 0 0 18px;
+    margin: 0 0 20px;
     line-height: 1.55;
 }
 .fa-empty-actions {
@@ -393,30 +412,112 @@
     pointer-events: auto;
 }
 .fa-empty-btn {
-    padding: 8px 14px;
+    padding: 9px 16px;
     border-radius: 8px;
-    background: var(--fa-surface-2);
+    background: var(--fa-surface);
     border: 1px solid var(--fa-border-strong);
     color: var(--fa-text);
     font-family: var(--fa-font);
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    display: inline-flex; align-items: center; gap: 6px;
+    display: inline-flex; align-items: center; gap: 7px;
     transition: all 0.12s;
 }
+.fa-empty-btn i { font-size: 16px; }
 .fa-empty-btn:hover {
-    background: var(--fa-surface-3);
+    background: var(--fa-surface-2);
     border-color: var(--fa-accent);
-    color: var(--fa-text);
 }
 .fa-empty-btn.fa-primary {
     background: var(--fa-accent-hot);
     border-color: var(--fa-accent-hot);
     color: white;
-    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.35);
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.3);
 }
-.fa-empty-btn.fa-primary:hover { background: #5558E8; }
+.fa-empty-btn.fa-primary:hover { background: #4338CA; border-color: #4338CA; color: white; }
+
+/* =================================================================
+   Zoom controls (floating bottom-left of canvas)
+   ================================================================= */
+.fa-zoom-controls {
+    position: absolute;
+    bottom: 18px;
+    left: 18px;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    background: var(--fa-surface);
+    border: 1px solid var(--fa-border);
+    border-radius: 9px;
+    padding: 3px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    z-index: 5;
+    font-family: var(--fa-font-mono);
+}
+.fa-zoom-btn {
+    width: 30px; height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--fa-text-dim);
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.1s;
+}
+.fa-zoom-btn:hover {
+    background: var(--fa-surface-2);
+    color: var(--fa-text);
+}
+.fa-zoom-btn i { font-size: 16px; }
+.fa-zoom-pct {
+    min-width: 48px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fa-text-dim);
+    padding: 0 6px;
+    cursor: pointer;
+}
+.fa-zoom-pct:hover { color: var(--fa-text); }
+.fa-zoom-sep {
+    width: 1px; height: 18px;
+    background: var(--fa-border);
+    margin: 0 2px;
+}
+
+/* Minimap (top-right of canvas) */
+.fa-minimap {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 160px;
+    height: 100px;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--fa-border);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    z-index: 4;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.fa-minimap-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+.fa-minimap-viewport {
+    fill: rgba(99, 102, 241, 0.12);
+    stroke: var(--fa-accent);
+    stroke-width: 1;
+}
+.fa-minimap-node {
+    fill: var(--fa-text-dim);
+    opacity: 0.6;
+}
 
 /* =================================================================
    Workflow node
@@ -431,53 +532,54 @@
     user-select: none;
     transition: border-color 0.12s, box-shadow 0.15s, transform 0.12s;
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.03) inset,
-        0 1px 0 rgba(255, 255, 255, 0.03) inset,
-        0 8px 24px rgba(0, 0, 0, 0.4);
+        0 1px 0 rgba(0, 0, 0, 0.02) inset,
+        0 1px 3px rgba(0, 0, 0, 0.04),
+        0 4px 12px rgba(0, 0, 0, 0.04);
 }
 .fa-wf-node:hover {
     border-color: var(--fa-border-strong);
     transform: translateY(-1px);
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.04) inset,
-        0 1px 0 rgba(255, 255, 255, 0.04) inset,
-        0 12px 32px rgba(0, 0, 0, 0.5);
+        0 1px 0 rgba(0, 0, 0, 0.02) inset,
+        0 4px 12px rgba(0, 0, 0, 0.06),
+        0 8px 24px rgba(0, 0, 0, 0.06);
 }
 .fa-wf-node.fa-selected {
     border-color: var(--fa-accent);
     box-shadow:
         0 0 0 1px var(--fa-accent),
         0 0 0 4px var(--fa-accent-dim),
-        0 12px 32px rgba(0, 0, 0, 0.5);
+        0 8px 24px rgba(99, 102, 241, 0.12);
 }
 
 .fa-node-head {
     display: flex; align-items: center; gap: 9px;
-    padding: 10px 12px;
+    padding: 11px 13px;
     border-bottom: 1px solid var(--fa-border);
     border-radius: 10px 10px 0 0;
     position: relative;
-    background: var(--fa-surface-2);
+    background: var(--fa-surface);
 }
 .fa-node-head::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, currentColor, transparent);
-    opacity: 0.3;
+    height: 2px;
+    background: currentColor;
+    opacity: 0.6;
+    border-radius: 10px 10px 0 0;
 }
 .fa-node-icon {
-    width: 26px; height: 26px;
+    width: 28px; height: 28px;
     border-radius: 7px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 14px;
     flex-shrink: 0;
 }
+.fa-node-icon i { font-size: 15px; }
 .fa-node-name {
     flex: 1;
     font-family: var(--fa-font);
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--fa-text);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -492,23 +594,23 @@
 }
 .fa-node-status[data-status="Success"] {
     background: var(--fa-success);
-    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
 }
 .fa-node-status[data-status="Failed"] {
     background: var(--fa-danger);
-    box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
 }
 .fa-node-status[data-status="Running"] {
     background: var(--fa-warn);
-    box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
     animation: fa-pulse 1s ease-in-out infinite;
 }
 @keyframes fa-pulse { 50% { opacity: 0.5; } }
 
 .fa-node-body {
-    padding: 9px 12px;
+    padding: 10px 13px;
     font-family: var(--fa-font-mono);
-    font-size: 10.5px;
+    font-size: 11px;
     color: var(--fa-text-dim);
     line-height: 1.5;
     overflow: hidden;
@@ -567,7 +669,7 @@
     position: absolute;
     font-family: var(--fa-font-mono);
     font-size: 9px;
-    font-weight: 600;
+    font-weight: 700;
     pointer-events: none;
     letter-spacing: 0.04em;
 }
@@ -594,9 +696,9 @@
     padding: 0 4px;
 }
 .fa-tab {
-    padding: 12px 14px;
+    padding: 13px 14px;
     font-family: var(--fa-font);
-    font-size: 12px;
+    font-size: 12.5px;
     font-weight: 500;
     color: var(--fa-text-mute);
     cursor: pointer;
@@ -604,9 +706,7 @@
     transition: color 0.12s;
 }
 .fa-tab:hover { color: var(--fa-text-dim); }
-.fa-tab.fa-tab-active {
-    color: var(--fa-text);
-}
+.fa-tab.fa-tab-active { color: var(--fa-text); }
 .fa-tab.fa-tab-active::after {
     content: '';
     position: absolute;
@@ -629,10 +729,11 @@
     font-weight: 600;
     color: var(--fa-text-mute);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.07em;
     display: flex; align-items: center; gap: 7px;
     flex-shrink: 0;
 }
+.fa-panel-header i { font-size: 14px; }
 .fa-panel-body {
     padding: 0 16px 16px;
     flex: 1;
@@ -655,32 +756,33 @@
 .fa-cfg-title {
     display: flex; align-items: center; gap: 9px;
     font-family: var(--fa-font);
-    font-size: 14px; font-weight: 600;
+    font-size: 14.5px; font-weight: 600;
     color: var(--fa-text);
     margin-bottom: 4px;
     letter-spacing: -0.015em;
 }
+.fa-cfg-title i { font-size: 17px; }
 .fa-cfg-id {
     font-family: var(--fa-font-mono);
     font-size: 10px;
     color: var(--fa-text-mute);
     margin-bottom: 14px;
-    padding: 2px 7px;
+    padding: 3px 8px;
     background: var(--fa-surface-2);
     border-radius: 4px;
     display: inline-block;
 }
 .fa-cfg-delete {
     margin-left: auto;
-    padding: 4px 7px;
+    padding: 5px 8px;
     background: transparent;
     border: 1px solid var(--fa-border);
     border-radius: 6px;
     cursor: pointer;
     color: var(--fa-text-mute);
     transition: all 0.12s;
-    font-size: 13px;
 }
+.fa-cfg-delete i { font-size: 14px; }
 .fa-cfg-delete:hover {
     color: var(--fa-danger);
     border-color: var(--fa-danger);
@@ -691,7 +793,7 @@
 .fa-field label {
     display: block;
     font-family: var(--fa-font);
-    font-size: 11px;
+    font-size: 11.5px;
     font-weight: 500;
     color: var(--fa-text-dim);
     margin-bottom: 5px;
@@ -703,15 +805,15 @@
     width: 100%;
     font-family: var(--fa-font-mono);
     font-size: 11.5px;
-    padding: 7px 9px;
+    padding: 8px 10px;
     border: 1px solid var(--fa-border);
     border-radius: 6px;
-    background: var(--fa-bg);
+    background: var(--fa-surface);
     color: var(--fa-text);
     transition: border-color 0.12s, box-shadow 0.12s;
 }
 .fa-field textarea {
-    min-height: 72px;
+    min-height: 76px;
     resize: vertical;
     line-height: 1.55;
 }
@@ -730,9 +832,9 @@
 .fa-link-slot input {
     font-family: var(--fa-font-mono) !important;
     font-size: 11.5px !important;
-    padding: 7px 9px !important;
+    padding: 8px 10px !important;
     height: auto !important;
-    background: var(--fa-bg) !important;
+    background: var(--fa-surface) !important;
     color: var(--fa-text) !important;
     border: 1px solid var(--fa-border) !important;
     border-radius: 6px !important;
@@ -753,7 +855,7 @@
     min-height: 0;
 }
 .fa-ai-msg {
-    padding: 11px 16px;
+    padding: 12px 16px;
     font-size: 12.5px;
     line-height: 1.6;
     border-left: 2px solid transparent;
@@ -767,12 +869,10 @@
     color: var(--fa-text-dim);
     border-left-color: var(--fa-cat-ai);
 }
-.fa-ai-msg-ai.fa-ok { color: var(--fa-success); }
-.fa-ai-msg-ai.fa-err { color: var(--fa-danger); }
 
 .fa-ai-help {
-    padding: 10px 16px;
-    font-size: 11px;
+    padding: 12px 16px;
+    font-size: 11.5px;
     color: var(--fa-text-mute);
     border-top: 1px solid var(--fa-border);
     flex-shrink: 0;
@@ -782,22 +882,23 @@
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 6px;
+    letter-spacing: 0.07em;
+    margin-bottom: 8px;
+    color: var(--fa-text-mute);
 }
 .fa-ai-help a {
     display: block;
     color: var(--fa-accent);
     text-decoration: none;
-    padding: 4px 0;
-    font-size: 11.5px;
+    padding: 5px 0;
+    font-size: 12px;
     cursor: pointer;
 }
-.fa-ai-help a:hover { color: var(--fa-text); }
+.fa-ai-help a:hover { color: var(--fa-accent-hot); }
 
 .fa-ai-input {
     display: flex; gap: 6px;
-    padding: 10px 12px;
+    padding: 11px 12px;
     border-top: 1px solid var(--fa-border);
     background: var(--fa-surface-2);
     flex-shrink: 0;
@@ -806,10 +907,10 @@
     flex: 1;
     font-family: var(--fa-font);
     font-size: 12.5px;
-    padding: 8px 11px;
+    padding: 9px 12px;
     border: 1px solid var(--fa-border);
     border-radius: 7px;
-    background: var(--fa-bg);
+    background: var(--fa-surface);
     color: var(--fa-text);
 }
 .fa-ai-input input:focus {
@@ -818,7 +919,7 @@
     box-shadow: 0 0 0 3px var(--fa-accent-dim);
 }
 .fa-ai-input button {
-    padding: 8px 14px;
+    padding: 9px 14px;
     border-radius: 7px;
     background: var(--fa-accent-hot);
     color: white;
@@ -828,7 +929,7 @@
     font-weight: 600;
     transition: background 0.12s;
 }
-.fa-ai-input button:hover { background: #5558E8; }
+.fa-ai-input button:hover { background: #4338CA; }
 
 /* =================================================================
    Stats grid
@@ -840,17 +941,17 @@
     padding: 8px 0;
 }
 .fa-stat {
-    background: var(--fa-surface-2);
+    background: var(--fa-surface);
     border: 1px solid var(--fa-border);
-    border-radius: 8px;
+    border-radius: 9px;
     padding: 14px 12px;
     text-align: center;
-    transition: border-color 0.12s;
+    transition: border-color 0.12s, transform 0.12s;
 }
-.fa-stat:hover { border-color: var(--fa-border-strong); }
+.fa-stat:hover { border-color: var(--fa-border-strong); transform: translateY(-1px); }
 .fa-sv {
     font-family: var(--fa-font);
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 600;
     color: var(--fa-text);
     letter-spacing: -0.02em;
@@ -860,9 +961,10 @@
     font-family: var(--fa-font-mono);
     font-size: 9.5px;
     color: var(--fa-text-mute);
-    margin-top: 6px;
+    margin-top: 7px;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
+    font-weight: 500;
 }
 
 /* =================================================================
@@ -901,7 +1003,7 @@
    ================================================================= */
 .fa-runlog {
     border-top: 1px solid var(--fa-border);
-    background: var(--fa-bg);
+    background: var(--fa-surface-2);
     flex-shrink: 0;
     max-height: 170px;
     display: flex; flex-direction: column;
@@ -913,9 +1015,9 @@
     font-weight: 600;
     color: var(--fa-text-mute);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.07em;
     border-bottom: 1px solid var(--fa-border);
-    background: var(--fa-surface-2);
+    background: var(--fa-surface);
     display: flex; align-items: center; gap: 6px;
 }
 .fa-runlog-label::before {
@@ -931,6 +1033,7 @@
     overflow-y: auto;
     padding: 6px 16px 10px;
     font-family: var(--fa-font-mono);
+    background: var(--fa-surface);
 }
 .fa-log-line {
     font-size: 10.5px;
@@ -984,88 +1087,28 @@ body.flowagent-fullscreen #fa-app {
 }
 
 /* =================================================================
-   Templates modal
+   Dark theme (opt-in)
    ================================================================= */
-.fa-templates-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
-    margin-top: 4px;
-}
-.fa-template-card {
-    background: var(--fa-surface);
-    border: 1px solid var(--fa-border);
-    border-radius: 10px;
-    padding: 16px;
-    cursor: pointer;
-    transition: all 0.15s;
-    position: relative;
-    overflow: hidden;
-}
-.fa-template-card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 3px;
-    background: var(--accent, var(--fa-accent));
-    opacity: 0.8;
-}
-.fa-template-card:hover {
-    border-color: var(--fa-accent);
-    transform: translateY(-2px);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.4);
-}
-.fa-tpl-icon {
-    width: 36px; height: 36px;
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--accent-bg, var(--fa-accent-dim));
-    color: var(--accent, var(--fa-accent));
-    font-size: 16px;
-    margin-bottom: 10px;
-}
-.fa-tpl-title {
-    font-family: var(--fa-font);
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--fa-text);
-    margin-bottom: 4px;
-    letter-spacing: -0.01em;
-}
-.fa-tpl-desc {
-    font-size: 11.5px;
-    color: var(--fa-text-dim);
-    line-height: 1.5;
-    margin-bottom: 10px;
-}
-.fa-tpl-meta {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-.fa-tpl-chip {
-    font-family: var(--fa-font-mono);
-    font-size: 9.5px;
-    padding: 2px 7px;
-    border-radius: 10px;
-    background: var(--fa-surface-3);
-    color: var(--fa-text-mute);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-
-/* =================================================================
-   Light theme override (when not in dark)
-   The Studio is dark by default; only honor [data-theme="light"] explicitly.
-   ================================================================= */
-[data-theme="light"] #fa-app {
-    --fa-bg: #FAFAF9;
-    --fa-surface: #FFFFFF;
-    --fa-surface-2: #F4F4F5;
-    --fa-surface-3: #E4E4E7;
-    --fa-border: #E4E4E7;
-    --fa-border-strong: #D4D4D8;
-    --fa-text: #18181B;
-    --fa-text-dim: #52525B;
+[data-theme="dark"] #fa-app {
+    --fa-bg: #0A0A0B;
+    --fa-surface: #131316;
+    --fa-surface-2: #1B1B1F;
+    --fa-surface-3: #232328;
+    --fa-border: #2A2A30;
+    --fa-border-strong: #3A3A42;
+    --fa-text: #F5F5F7;
+    --fa-text-dim: #A1A1AA;
     --fa-text-mute: #71717A;
+    --fa-accent: #818CF8;
+    --fa-accent-hot: #6366F1;
+    --fa-accent-dim: rgba(129, 140, 248, 0.12);
+}
+[data-theme="dark"] .fa-topbar {
+    background: rgba(19, 19, 22, 0.85);
+}
+[data-theme="dark"] .fa-canvas-grid {
+    background-image: radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 1px, transparent 1.5px);
+}
+[data-theme="dark"] .fa-minimap {
+    background: rgba(19, 19, 22, 0.9);
 }

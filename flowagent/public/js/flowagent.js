@@ -476,7 +476,16 @@ let state = {
     nodeCounter: 0,
     currentTab: 'config',
     lastRun: null,
+    // Canvas viewport — applied to .fa-canvas-stage as translate(x,y) scale(zoom)
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    spaceDown: false,
 };
+
+const ZOOM_MIN = 0.3;
+const ZOOM_MAX = 2.5;
+const ZOOM_STEP = 0.1;
 
 const uuid = () => 'n' + (++state.nodeCounter);
 
@@ -515,7 +524,7 @@ window.flowagent_studio_html = function () {
             <i class="ti ti-plus"></i> New</button>
         <button class="fa-tb-btn" data-action="templates">
             <i class="ti ti-template"></i> Templates</button>
-        <button class="fa-tb-btn" data-action="clear" title="Clear canvas">
+        <button class="fa-tb-btn fa-tb-icon-only" data-action="clear" title="Clear canvas">
             <i class="ti ti-trash"></i></button>
         <div class="fa-tb-sep"></div>
         <label class="fa-tb-toggle">
@@ -525,7 +534,7 @@ window.flowagent_studio_html = function () {
         <span id="fa-trigger-indicator" class="fa-trigger-pill" title="Trigger status"></span>
         <div class="fa-spacer"></div>
         <span id="fa-wf-name" title="Click to rename">Untitled workflow</span>
-        <button class="fa-tb-btn" data-action="diagnose" title="Diagnose trigger issues">
+        <button class="fa-tb-btn fa-tb-icon-only" data-action="diagnose" title="Diagnose trigger issues">
             <i class="ti ti-stethoscope"></i></button>
         <button class="fa-tb-btn" data-action="save">
             <i class="ti ti-device-floppy"></i> Save</button>
@@ -537,9 +546,11 @@ window.flowagent_studio_html = function () {
         <div class="fa-sidebar">${sidebarHtml}</div>
 
         <div class="fa-canvas-wrap" id="fa-canvas-wrap">
-            <div class="fa-canvas-grid"></div>
-            <svg class="fa-edges" id="fa-edges"></svg>
-            <div id="fa-canvas"></div>
+            <div class="fa-canvas-grid" id="fa-canvas-grid"></div>
+            <div class="fa-canvas-stage" id="fa-canvas-stage">
+                <svg class="fa-edges" id="fa-edges"></svg>
+                <div id="fa-canvas"></div>
+            </div>
             <div class="fa-empty" id="fa-empty">
                 <div class="fa-empty-mark"><i class="ti ti-bolt"></i></div>
                 <h2>Build an AI workflow</h2>
@@ -550,6 +561,25 @@ window.flowagent_studio_html = function () {
                     <button class="fa-empty-btn" data-action="open-ai-tab">
                         <i class="ti ti-sparkles"></i> AI Build</button>
                 </div>
+            </div>
+
+            <!-- Minimap (top-right) -->
+            <div class="fa-minimap" id="fa-minimap" title="Click to centre the view">
+                <svg class="fa-minimap-svg" id="fa-minimap-svg"
+                     xmlns="http://www.w3.org/2000/svg"
+                     preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+
+            <!-- Zoom controls (bottom-left) -->
+            <div class="fa-zoom-controls">
+                <button class="fa-zoom-btn" data-action="zoom-out" title="Zoom out (Ctrl/⌘ + −)">
+                    <i class="ti ti-minus"></i></button>
+                <span class="fa-zoom-pct" id="fa-zoom-pct" data-action="zoom-reset" title="Reset (Ctrl/⌘ + 0)">100%</span>
+                <button class="fa-zoom-btn" data-action="zoom-in" title="Zoom in (Ctrl/⌘ + +)">
+                    <i class="ti ti-plus"></i></button>
+                <span class="fa-zoom-sep"></span>
+                <button class="fa-zoom-btn" data-action="zoom-fit" title="Fit all nodes (F)">
+                    <i class="ti ti-maximize"></i></button>
             </div>
         </div>
 
@@ -620,6 +650,7 @@ window.flowagent_studio_init = function (page, wrapper) {
     bindEvents();
     refreshStats();
     refreshTriggerIndicator();
+    applyTransform();
     addLog('Studio ready', 'info');
 
     // Check for handoff from "Open in Studio" button on a workflow form
@@ -668,6 +699,76 @@ function bindEvents() {
         }
     });
 
+    // Mouse wheel zoom — only when Ctrl/Cmd is held (otherwise scroll).
+    // Without this gate, every wheel touch on the canvas would zoom,
+    // which feels chaotic on trackpads.
+    wrap.addEventListener('wheel', e => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const delta = -Math.sign(e.deltaY) * ZOOM_STEP;
+        zoomAtPoint(state.zoom + delta, cx, cy);
+    }, { passive: false });
+
+    // Pan: space-bar + drag, or middle-mouse drag, or two-finger pinch-pan
+    document.addEventListener('keydown', e => {
+        if (e.code === 'Space' && !state.spaceDown && !isTypingTarget(e.target)) {
+            state.spaceDown = true;
+            wrap.classList.add('fa-space-down');
+            e.preventDefault();
+        }
+        // Keyboard zoom shortcuts (when not typing)
+        if (!isTypingTarget(e.target) && (e.ctrlKey || e.metaKey)) {
+            if (e.key === '=' || e.key === '+') { e.preventDefault(); setZoom(state.zoom + ZOOM_STEP); }
+            if (e.key === '-')                  { e.preventDefault(); setZoom(state.zoom - ZOOM_STEP); }
+            if (e.key === '0')                  { e.preventDefault(); resetView(); }
+        }
+        if (!isTypingTarget(e.target) && e.key === 'f') {
+            e.preventDefault();
+            fitView();
+        }
+    });
+    document.addEventListener('keyup', e => {
+        if (e.code === 'Space') {
+            state.spaceDown = false;
+            wrap.classList.remove('fa-space-down');
+        }
+    });
+
+    // Pan drag (space-held or middle-button)
+    wrap.addEventListener('mousedown', e => {
+        const isMiddle = e.button === 1;
+        const isPanRequested = state.spaceDown || isMiddle;
+        // Allow pan from blank canvas (not on a node or port)
+        const isBlank = e.target === wrap
+            || e.target.classList.contains('fa-canvas-grid')
+            || e.target.classList.contains('fa-canvas-stage');
+        if (!isPanRequested && !isBlank) return;
+        if (e.target.classList.contains('fa-port') || e.target.closest('.fa-wf-node')) {
+            // node / port has its own mousedown handler
+            if (!isPanRequested) return;
+        }
+        e.preventDefault();
+        const stage = document.getElementById('fa-canvas-stage');
+        stage.classList.add('fa-panning');
+        const startX = e.clientX, startY = e.clientY;
+        const startPanX = state.panX, startPanY = state.panY;
+        function onMove(ev) {
+            state.panX = startPanX + (ev.clientX - startX);
+            state.panY = startPanY + (ev.clientY - startY);
+            applyTransform();
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            stage.classList.remove('fa-panning');
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    });
+
     // Workflow name rename
     document.getElementById('fa-wf-name').addEventListener('click', () => {
         const n = prompt('Workflow name:', state.workflowName);
@@ -696,6 +797,151 @@ function bindEvents() {
     document.getElementById('fa-ai-input').addEventListener('keydown', e => {
         if (e.key === 'Enter') handleAction('ai-send');
     });
+
+    // Minimap click → centre view at that spot
+    const minimap = document.getElementById('fa-minimap');
+    if (minimap) {
+        minimap.addEventListener('click', e => {
+            const r = minimap.getBoundingClientRect();
+            const fx = (e.clientX - r.left) / r.width;
+            const fy = (e.clientY - r.top) / r.height;
+            centreViewAt(fx, fy);
+        });
+    }
+}
+
+function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = (el.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+}
+
+// ============================================================
+// Zoom + pan
+// ============================================================
+function applyTransform() {
+    const stage = document.getElementById('fa-canvas-stage');
+    const grid = document.getElementById('fa-canvas-grid');
+    if (!stage) return;
+    const t = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+    stage.style.transform = t;
+    // The grid also pans (but not scales) so dots stay 22px on screen
+    if (grid) {
+        grid.style.backgroundPosition = `${state.panX}px ${state.panY}px`;
+    }
+    const pctEl = document.getElementById('fa-zoom-pct');
+    if (pctEl) pctEl.textContent = Math.round(state.zoom * 100) + '%';
+    renderMinimap();
+}
+
+function setZoom(newZoom) {
+    const wrap = document.getElementById('fa-canvas-wrap');
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    zoomAtPoint(newZoom, rect.width / 2, rect.height / 2);
+}
+
+function zoomAtPoint(newZoom, cx, cy) {
+    newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+    // Adjust pan so the point under (cx, cy) stays put while zooming
+    const scaleRatio = newZoom / state.zoom;
+    state.panX = cx - (cx - state.panX) * scaleRatio;
+    state.panY = cy - (cy - state.panY) * scaleRatio;
+    state.zoom = newZoom;
+    applyTransform();
+}
+
+function resetView() {
+    state.zoom = 1;
+    state.panX = 0;
+    state.panY = 0;
+    applyTransform();
+}
+
+function fitView() {
+    if (!state.nodes.length) { resetView(); return; }
+    const wrap = document.getElementById('fa-canvas-wrap');
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const padding = 60;
+    // Bounding box of nodes (node width ~184, head+body ~88)
+    const NW = 184, NH = 88;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    state.nodes.forEach(n => {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + NW);
+        maxY = Math.max(maxY, n.y + NH);
+    });
+    const contentW = maxX - minX;
+    const contentH = maxY - minY;
+    const availW = rect.width - padding * 2;
+    const availH = rect.height - padding * 2;
+    const z = Math.min(availW / contentW, availH / contentH, 1.5);
+    state.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    // Centre the content
+    state.panX = padding + (availW - contentW * state.zoom) / 2 - minX * state.zoom;
+    state.panY = padding + (availH - contentH * state.zoom) / 2 - minY * state.zoom;
+    applyTransform();
+}
+
+function centreViewAt(fx, fy) {
+    // fx, fy are 0..1 fractions of the minimap → translate to world coords
+    if (!state.nodes.length) return;
+    const wrap = document.getElementById('fa-canvas-wrap');
+    if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const NW = 184, NH = 88;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    state.nodes.forEach(n => {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + NW);
+        maxY = Math.max(maxY, n.y + NH);
+    });
+    const worldX = minX + fx * (maxX - minX);
+    const worldY = minY + fy * (maxY - minY);
+    state.panX = rect.width / 2 - worldX * state.zoom;
+    state.panY = rect.height / 2 - worldY * state.zoom;
+    applyTransform();
+}
+
+function renderMinimap() {
+    const svg = document.getElementById('fa-minimap-svg');
+    if (!svg) return;
+    const wrap = document.getElementById('fa-canvas-wrap');
+    if (!wrap) return;
+    if (!state.nodes.length) {
+        svg.innerHTML = '';
+        return;
+    }
+    const NW = 184, NH = 88;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    state.nodes.forEach(n => {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + NW);
+        maxY = Math.max(maxY, n.y + NH);
+    });
+    // Pad bounds a bit
+    const pad = 50;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    const w = maxX - minX, h = maxY - minY;
+    svg.setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
+
+    // Viewport rectangle = canvas-wrap mapped through inverse transform
+    const rect = wrap.getBoundingClientRect();
+    const vx = -state.panX / state.zoom;
+    const vy = -state.panY / state.zoom;
+    const vw = rect.width / state.zoom;
+    const vh = rect.height / state.zoom;
+
+    const nodeRects = state.nodes.map(n =>
+        `<rect class="fa-minimap-node" x="${n.x}" y="${n.y}" width="${NW}" height="${NH}" rx="6"/>`
+    ).join('');
+
+    svg.innerHTML = nodeRects +
+        `<rect class="fa-minimap-viewport" x="${vx}" y="${vy}" width="${vw}" height="${vh}" rx="4"/>`;
 }
 
 function handleAction(name) {
@@ -709,6 +955,10 @@ function handleAction(name) {
         case 'ai-send':      return aiSend();
         case 'diagnose':     return runDiagnose();
         case 'open-ai-tab':  return switchTab('ai');
+        case 'zoom-in':      return setZoom(state.zoom + ZOOM_STEP);
+        case 'zoom-out':     return setZoom(state.zoom - ZOOM_STEP);
+        case 'zoom-reset':   return resetView();
+        case 'zoom-fit':     return fitView();
     }
 }
 
@@ -938,13 +1188,24 @@ function clearCanvas(askConfirm) {
 // ============================================================
 function handleDrop(e) {
     if (!state.draggingType) return;
-    const wrap = document.getElementById('fa-canvas-wrap');
-    const rect = wrap.getBoundingClientRect();
-    addNode(state.draggingType,
-            e.clientX - rect.left - 85,
-            e.clientY - rect.top - 40);
+    const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+    addNode(state.draggingType, wx - 90, wy - 40);
     state.draggingType = null;
     document.getElementById('fa-empty').style.display = 'none';
+}
+
+// Convert a screen-space (clientX, clientY) into world coordinates within
+// the canvas stage. Required everywhere we accept mouse input because
+// nodes live in world space but mouse events report screen pixels.
+function screenToWorld(clientX, clientY) {
+    const wrap = document.getElementById('fa-canvas-wrap');
+    const rect = wrap.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    return {
+        wx: (sx - state.panX) / state.zoom,
+        wy: (sy - state.panY) / state.zoom,
+    };
 }
 
 function addNode(type, x, y, overrides = {}) {
@@ -966,6 +1227,8 @@ function renderAll() {
     state.nodes.forEach(renderNode);
     renderEdges();
     refreshTriggerIndicator();
+    applyTransform();
+    renderMinimap();
 }
 
 function renderNode(n) {
@@ -1032,18 +1295,23 @@ function nodePreviewText(n) {
 
 function startNodeDrag(e, id) {
     if (e.target.classList.contains('fa-port')) return;
+    // If user is space-panning, skip node drag
+    if (state.spaceDown) return;
     const n = state.nodes.find(x => x.id === id);
     if (!n) return;
     e.preventDefault();
-    const wrap = document.getElementById('fa-canvas-wrap').getBoundingClientRect();
-    const ox = e.clientX - wrap.left - n.x;
-    const oy = e.clientY - wrap.top - n.y;
+    // Compute the offset between the cursor (in world space) and the node origin
+    const start = screenToWorld(e.clientX, e.clientY);
+    const ox = start.wx - n.x;
+    const oy = start.wy - n.y;
     function move(e2) {
-        n.x = Math.max(0, e2.clientX - wrap.left - ox);
-        n.y = Math.max(0, e2.clientY - wrap.top - oy);
+        const w = screenToWorld(e2.clientX, e2.clientY);
+        n.x = Math.max(0, w.wx - ox);
+        n.y = Math.max(0, w.wy - oy);
         const el = document.getElementById('fa-node-' + id);
         if (el) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; }
         renderEdges();
+        renderMinimap();
     }
     function up() {
         document.removeEventListener('mousemove', move);
@@ -1071,28 +1339,25 @@ function deselectAll() {
 // Wiring (edges) — drag from output port, drop on input port
 // ============================================================
 function startWireDrag(fromNodeId, fromPort, mdEvent) {
-    const wrap = document.getElementById('fa-canvas-wrap');
-    const wrapRect = wrap.getBoundingClientRect();
     const fromNode = state.nodes.find(n => n.id === fromNodeId);
     if (!fromNode) return;
 
     // Highlight the source port so the user knows wire-drag mode is active
     flashPort(fromNodeId, fromPort, true);
 
-    // Add a live preview path to the edges SVG
+    // Add a live preview path to the edges SVG (which lives inside the
+    // transformed stage, so we plot in WORLD coordinates)
     const svg = document.getElementById('fa-edges');
     const previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     previewPath.setAttribute('class', 'fa-edge-path fa-edge-preview');
-    previewPath.setAttribute('stroke-dasharray', '5,4');
     svg.appendChild(previewPath);
 
     function onMove(e) {
         const fp = portXY(fromNode, fromPort);
-        const cx = e.clientX - wrapRect.left;
-        const cy = e.clientY - wrapRect.top;
-        const dx = (cx - fp.x) / 2;
+        const { wx, wy } = screenToWorld(e.clientX, e.clientY);
+        const dx = (wx - fp.x) / 2;
         previewPath.setAttribute('d',
-            `M${fp.x},${fp.y} C${fp.x + dx},${fp.y} ${cx - dx},${cy} ${cx},${cy}`);
+            `M${fp.x},${fp.y} C${fp.x + dx},${fp.y} ${wx - dx},${wy} ${wx},${wy}`);
     }
 
     function onUp(e) {
@@ -1139,10 +1404,15 @@ function flashPort(nodeId, port, sticky) {
 
 function renderEdges() {
     const svg = document.getElementById('fa-edges');
-    const wrap = document.getElementById('fa-canvas-wrap');
-    if (!svg || !wrap) return;
-    svg.setAttribute('width', wrap.clientWidth);
-    svg.setAttribute('height', wrap.clientHeight);
+    if (!svg) return;
+    // SVG lives inside the transformed stage. Size it generously so paths
+    // remain visible regardless of zoom/pan. We use a 6000×6000 canvas
+    // which is more than enough for any reasonable workflow graph.
+    const SVG_SIZE = 6000;
+    svg.setAttribute('width', SVG_SIZE);
+    svg.setAttribute('height', SVG_SIZE);
+    svg.style.width = SVG_SIZE + 'px';
+    svg.style.height = SVG_SIZE + 'px';
     svg.innerHTML = '';
     state.edges.forEach(e => {
         const from = state.nodes.find(n => n.id === e.from);
@@ -1161,12 +1431,12 @@ function renderEdges() {
 }
 
 function portXY(node, port) {
-    // Node is 170px wide, head ~36px high. Approximate.
-    const W = 170, H = 80;
+    // Node is 184px wide, head ~46px + body ~36px ≈ 88px total.
+    const W = 184, H = 88;
     if (port === 'in')      return { x: node.x,       y: node.y + H / 2 };
     if (port === 'out')     return { x: node.x + W,   y: node.y + H / 2 };
-    if (port === 'out-yes') return { x: node.x + W,   y: node.y + H * 0.35 };
-    if (port === 'out-no')  return { x: node.x + W,   y: node.y + H * 0.65 };
+    if (port === 'out-yes') return { x: node.x + W,   y: node.y + H * 0.36 };
+    if (port === 'out-no')  return { x: node.x + W,   y: node.y + H * 0.64 };
     return { x: node.x + W, y: node.y + H / 2 };
 }
 
