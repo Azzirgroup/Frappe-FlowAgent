@@ -178,21 +178,29 @@
 
 /* ---------- Ports ---------- */
 .fa-port {
-    position: absolute; width: 10px; height: 10px;
+    position: absolute; width: 12px; height: 12px;
     border-radius: 50%;
     background: var(--card-bg, #fff);
     border: 1.5px solid #534AB7;
-    cursor: crosshair; z-index: 2;
+    cursor: crosshair; z-index: 3;
 }
-.fa-port:hover { background: #534AB7; }
+/* Larger invisible hit-area around the visible port so it's easy to grab */
+.fa-port::before {
+    content: ''; position: absolute;
+    inset: -8px; border-radius: 50%;
+}
+.fa-port:hover { background: #534AB7; transform: scale(1.2); }
 .fa-port.fa-port-flash {
     background: #534AB7;
-    box-shadow: 0 0 0 4px rgba(83, 74, 183, 0.25);
+    box-shadow: 0 0 0 6px rgba(83, 74, 183, 0.25);
 }
-.fa-port-in  { left: -5px; top: 50%; transform: translateY(-50%); }
-.fa-port-out { right: -5px; top: 50%; transform: translateY(-50%); }
-.fa-port-yes { right: -5px; top: 35%; transform: translateY(-50%); border-color: #1D9E75; }
-.fa-port-no  { right: -5px; top: 65%; transform: translateY(-50%); border-color: #E24B4A; }
+.fa-port-in  { left: -6px; top: 50%; transform: translateY(-50%); }
+.fa-port-out { right: -6px; top: 50%; transform: translateY(-50%); }
+.fa-port-yes { right: -6px; top: 35%; transform: translateY(-50%); border-color: #1D9E75; }
+.fa-port-no  { right: -6px; top: 65%; transform: translateY(-50%); border-color: #E24B4A; }
+.fa-port-yes:hover { background: #1D9E75; }
+.fa-port-no:hover  { background: #E24B4A; }
+.fa-edge-preview { stroke: #534AB7; opacity: 0.6; }
 .fa-port-label {
     position: absolute;
     font-size: 9px; font-weight: 600;
@@ -375,3 +383,56 @@
 [data-theme="dark"] .fa-canvas-wrap { background: #181818; }
 [data-theme="dark"] .fa-sidebar { background: #1a1a1a; }
 [data-theme="dark"] .fa-topbar-badge { background: #2a2754; color: #b3aef0; }
+
+/* ---------- Fullscreen mode for the Studio ---------- */
+body.flowagent-fullscreen .navbar,
+body.flowagent-fullscreen .layout-side-section,
+body.flowagent-fullscreen .page-head,
+body.flowagent-fullscreen footer.web-footer,
+body.flowagent-fullscreen .form-footer {
+    display: none !important;
+}
+body.flowagent-fullscreen .container,
+body.flowagent-fullscreen .layout-main-section-wrapper,
+body.flowagent-fullscreen .layout-main-section,
+body.flowagent-fullscreen .layout-main,
+body.flowagent-fullscreen .main-section,
+body.flowagent-fullscreen .page-container {
+    max-width: none !important;
+    width: 100vw !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+body.flowagent-fullscreen .page-body,
+body.flowagent-fullscreen #body,
+body.flowagent-fullscreen #page-flowagent-studio {
+    padding: 0 !important;
+    margin: 0 !important;
+}
+body.flowagent-fullscreen #fa-app {
+    height: 100vh !important;
+    border-radius: 0 !important;
+    border: none !important;
+}
+
+/* Link control mounting slot — let Frappe's control fill it */
+.fa-link-slot .frappe-control { margin-bottom: 0 !important; }
+.fa-link-slot .control-input-wrapper { margin-top: 0 !important; }
+.fa-link-slot .form-control {
+    font-size: 12px !important;
+    padding: 5px 8px !important;
+    height: auto !important;
+}
+
+/* Trigger status pill in toolbar */
+.fa-trigger-pill {
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 20px;
+    border: 0.5px solid var(--border-color, #e5e5e0);
+    white-space: nowrap;
+    margin-left: 4px;
+}
+.fa-trigger-on  { background: #E8F4EE; color: #0F6E56; border-color: #c0e0d2; }
+.fa-trigger-off { background: var(--bg-light-gray, #f6f6f5); color: var(--text-muted, #6b6b6b); }
+.fa-trigger-warn { background: #FFF2D8; color: #8a5800; border-color: #f0d8a8; }

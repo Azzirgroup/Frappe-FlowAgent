@@ -371,8 +371,11 @@ window.flowagent_studio_html = function () {
             <input type="checkbox" id="fa-enabled-toggle">
             <span>Enabled</span>
         </label>
+        <span id="fa-trigger-indicator" class="fa-trigger-pill" title="Trigger status"></span>
         <div class="fa-spacer"></div>
         <span id="fa-wf-name" title="Click to rename">Untitled workflow</span>
+        <button class="fa-tb-btn" data-action="diagnose" title="Diagnose trigger issues">
+            <i class="ti ti-stethoscope"></i></button>
         <button class="fa-tb-btn" data-action="save">
             <i class="ti ti-device-floppy"></i> Save</button>
         <button class="fa-tb-btn fa-run" data-action="run">
@@ -458,6 +461,7 @@ window.flowagent_studio_init = function (page, wrapper) {
     state.wrapper = wrapper;
     bindEvents();
     refreshStats();
+    refreshTriggerIndicator();
     addLog('Studio ready', 'info');
 
     // Check for handoff from "Open in Studio" button on a workflow form
@@ -518,6 +522,7 @@ function bindEvents() {
     // Enabled toggle
     document.getElementById('fa-enabled-toggle').addEventListener('change', e => {
         state.enabled = e.target.checked;
+        refreshTriggerIndicator();
     });
 
     // AI sample prompts
@@ -544,7 +549,39 @@ function handleAction(name) {
         case 'save':       return saveWorkflow();
         case 'run':        return runWorkflow();
         case 'ai-send':    return aiSend();
+        case 'diagnose':   return runDiagnose();
     }
+}
+
+function runDiagnose() {
+    frappe.call({
+        method: 'flowagent.api.studio.diagnose',
+        args: state.currentWorkflow ? { workflow: state.currentWorkflow } : {},
+        callback: r => {
+            const report = r.message;
+            if (!report) return;
+            const items = (report.checks || []).map(c => {
+                const icon = c.ok
+                    ? '<i class="ti ti-circle-check" style="color:#1D9E75"></i>'
+                    : '<i class="ti ti-alert-circle" style="color:#E24B4A"></i>';
+                const detail = c.detail
+                    ? `<div style="font-size:11px;color:#666;margin-left:18px">${frappe.utils.escape_html(c.detail)}</div>`
+                    : '';
+                return `<div style="padding:4px 0;display:flex;align-items:flex-start;gap:6px">
+                    <span style="margin-top:2px">${icon}</span>
+                    <div style="flex:1">${frappe.utils.escape_html(c.name)}${detail}</div>
+                </div>`;
+            }).join('');
+            const header = report.ok
+                ? '<div style="color:#1D9E75;font-weight:500;margin-bottom:8px">All checks passed ✓</div>'
+                : '<div style="color:#E24B4A;font-weight:500;margin-bottom:8px">Some checks failed — see details below</div>';
+            frappe.msgprint({
+                title: 'FlowAgent diagnostics',
+                message: header + items,
+                wide: true,
+            });
+        },
+    });
 }
 
 // ============================================================
@@ -623,6 +660,35 @@ function loadWorkflow(name) {
     });
 }
 
+function inferTriggerFromCanvas() {
+    const triggerNode = state.nodes.find(n => n.type && n.type.startsWith('trigger_'));
+    if (!triggerNode) return { type: 'Manual' };
+    if (triggerNode.type === 'trigger_doctype') {
+        return {
+            type: 'DocType Event',
+            doctype: triggerNode.cfg.doctype,
+            event: triggerNode.cfg.event,
+        };
+    }
+    if (triggerNode.type === 'trigger_schedule') {
+        return { type: 'Schedule', cron: triggerNode.cfg.cron };
+    }
+    if (triggerNode.type === 'trigger_webhook') {
+        return { type: 'Webhook' };
+    }
+    return { type: 'Manual' };
+}
+
+function validateForEnabled(trigger) {
+    if (trigger.type === 'DocType Event' && (!trigger.doctype || !trigger.event)) {
+        return 'A DocType-triggered workflow needs both DocType and Event set on the trigger node.';
+    }
+    if (trigger.type === 'Schedule' && !trigger.cron) {
+        return 'A scheduled workflow needs a cron expression on the trigger node.';
+    }
+    return null;
+}
+
 function saveWorkflow() {
     if (!state.workflowName || state.workflowName === 'Untitled workflow') {
         const n = prompt('Name this workflow:', '');
@@ -630,21 +696,22 @@ function saveWorkflow() {
         state.workflowName = n;
         document.getElementById('fa-wf-name').textContent = n;
     }
-    // Infer trigger from the trigger node, if present
-    const triggerNode = state.nodes.find(n => n.type && n.type.startsWith('trigger_'));
-    if (triggerNode) {
-        if (triggerNode.type === 'trigger_doctype') {
-            state.trigger = {
-                type: 'DocType Event',
-                doctype: triggerNode.cfg.doctype,
-                event: triggerNode.cfg.event,
-            };
-        } else if (triggerNode.type === 'trigger_schedule') {
-            state.trigger = { type: 'Schedule', cron: triggerNode.cfg.cron };
-        } else if (triggerNode.type === 'trigger_webhook') {
-            state.trigger = { type: 'Webhook' };
-        } else {
-            state.trigger = { type: 'Manual' };
+    state.trigger = inferTriggerFromCanvas();
+
+    // If user wants this enabled, make sure the trigger is well-formed —
+    // otherwise the workflow will save but no doctype event listener gets
+    // registered, and the user will be very confused about why nothing fires.
+    if (state.enabled) {
+        const err = validateForEnabled(state.trigger);
+        if (err) {
+            frappe.msgprint({
+                title: 'Cannot enable workflow',
+                message: err,
+                indicator: 'red',
+            });
+            // Save it as disabled instead of silently breaking
+            state.enabled = false;
+            document.getElementById('fa-enabled-toggle').checked = false;
         }
     }
 
@@ -666,6 +733,7 @@ function saveWorkflow() {
             if (r.message) {
                 state.currentWorkflow = r.message.name;
                 addLog(`Saved "${state.workflowName}"`, 'ok');
+                refreshTriggerIndicator();
                 frappe.show_alert({ message: 'Workflow saved', indicator: 'green' });
             }
         },
@@ -708,6 +776,7 @@ function addNode(type, x, y, overrides = {}) {
     state.nodes.push(n);
     renderNode(n);
     renderEdges();
+    if (type.startsWith('trigger_')) refreshTriggerIndicator();
     return id;
 }
 
@@ -715,6 +784,7 @@ function renderAll() {
     document.getElementById('fa-canvas').innerHTML = '';
     state.nodes.forEach(renderNode);
     renderEdges();
+    refreshTriggerIndicator();
 }
 
 function renderNode(n) {
@@ -755,10 +825,19 @@ function renderNode(n) {
     el.addEventListener('mousedown', e => startNodeDrag(e, n.id));
     el.addEventListener('click', e => { e.stopPropagation(); selectNode(n.id); });
 
+    // Wiring: mousedown on an output port begins a drag; mouseup on an
+    // input port completes it. Clicking inputs does nothing.
     el.querySelectorAll('.fa-port').forEach(p => {
-        p.addEventListener('click', e => {
+        const port = p.dataset.port;
+        if (port === 'in') {
+            // Input ports just need to *receive* a drop — handled in startWireDrag
+            // via document mouseup. Nothing to bind here.
+            return;
+        }
+        p.addEventListener('mousedown', e => {
             e.stopPropagation();
-            handlePortClick(p.dataset.node, p.dataset.port);
+            e.preventDefault();
+            startWireDrag(p.dataset.node, port, e);
         });
     });
 }
@@ -808,36 +887,72 @@ function deselectAll() {
 }
 
 // ============================================================
-// Wiring (edges)
+// Wiring (edges) — drag from output port, drop on input port
 // ============================================================
-function handlePortClick(nodeId, port) {
-    if (!state.connectingFrom) {
-        if (port === 'in') return;     // can't start a wire from an input port
-        state.connectingFrom = { node: nodeId, port };
-        flashPort(nodeId, port);
-        return;
+function startWireDrag(fromNodeId, fromPort, mdEvent) {
+    const wrap = document.getElementById('fa-canvas-wrap');
+    const wrapRect = wrap.getBoundingClientRect();
+    const fromNode = state.nodes.find(n => n.id === fromNodeId);
+    if (!fromNode) return;
+
+    // Highlight the source port so the user knows wire-drag mode is active
+    flashPort(fromNodeId, fromPort, true);
+
+    // Add a live preview path to the edges SVG
+    const svg = document.getElementById('fa-edges');
+    const previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    previewPath.setAttribute('class', 'fa-edge-path fa-edge-preview');
+    previewPath.setAttribute('stroke-dasharray', '5,4');
+    svg.appendChild(previewPath);
+
+    function onMove(e) {
+        const fp = portXY(fromNode, fromPort);
+        const cx = e.clientX - wrapRect.left;
+        const cy = e.clientY - wrapRect.top;
+        const dx = (cx - fp.x) / 2;
+        previewPath.setAttribute('d',
+            `M${fp.x},${fp.y} C${fp.x + dx},${fp.y} ${cx - dx},${cy} ${cx},${cy}`);
     }
-    // Completing a wire
-    const from = state.connectingFrom;
-    state.connectingFrom = null;
-    if (from.node === nodeId) return;  // self-loop disallowed
-    if (port !== 'in') {
-        // user clicked another output — treat as restart
-        state.connectingFrom = { node: nodeId, port };
-        flashPort(nodeId, port);
-        return;
+
+    function onUp(e) {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        previewPath.remove();
+        flashPort(fromNodeId, fromPort, false);
+
+        // What did we drop on?
+        const target = document.elementFromPoint(e.clientX, e.clientY);
+        if (!target || !target.classList.contains('fa-port')) {
+            return; // cancelled
+        }
+        const toNodeId = target.dataset.node;
+        const toPort = target.dataset.port;
+        if (toPort !== 'in') return; // must drop on an input
+        if (toNodeId === fromNodeId) return; // no self-loops
+
+        // Replace any existing edge from this same source+port (only one
+        // wire per output port — out-yes / out-no behave correctly).
+        state.edges = state.edges.filter(
+            ed => !(ed.from === fromNodeId && (ed.fromPort || 'out') === fromPort)
+        );
+        state.edges.push({ from: fromNodeId, to: toNodeId, fromPort });
+        renderEdges();
+        addLog(`Wired ${fromNodeId}/${fromPort} → ${toNodeId}`, 'info');
     }
-    // Replace any existing edge from same source+port (one out-yes per node, etc.)
-    state.edges = state.edges.filter(e => !(e.from === from.node && (e.fromPort || 'out') === from.port));
-    state.edges.push({ from: from.node, to: nodeId, fromPort: from.port });
-    renderEdges();
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    // Kick once so the preview line shows at the click point
+    onMove(mdEvent);
 }
 
-function flashPort(nodeId, port) {
-    const portEl = document.querySelector(`.fa-port[data-node='${nodeId}'][data-port='${port}']`);
-    if (portEl) {
-        portEl.classList.add('fa-port-flash');
-        setTimeout(() => portEl.classList.remove('fa-port-flash'), 1200);
+function flashPort(nodeId, port, sticky) {
+    const portEl = document.querySelector(
+        `.fa-port[data-node='${nodeId}'][data-port='${port}']`);
+    if (!portEl) return;
+    portEl.classList.add('fa-port-flash');
+    if (!sticky) {
+        setTimeout(() => portEl.classList.remove('fa-port-flash'), 800);
     }
 }
 
@@ -901,6 +1016,7 @@ function renderConfigPanel() {
     });
     body.innerHTML = html;
 
+    // Plain inputs / textareas / selects — bind change handlers
     body.querySelectorAll('[data-cfg-key]').forEach(inp => {
         inp.addEventListener('input', e => {
             const key = inp.dataset.cfgKey;
@@ -914,6 +1030,35 @@ function renderConfigPanel() {
                 renderNode(n);
             });
         }
+    });
+
+    // Link fields — mount real Frappe Link controls with autocomplete.
+    def.fields.filter(f => f.t === 'link').forEach(f => {
+        const slot = body.querySelector(`[data-link-slot="${f.k}"]`);
+        if (!slot) return;
+        const ctrl = frappe.ui.form.make_control({
+            df: {
+                fieldtype: 'Link',
+                fieldname: f.k,
+                options: f.options,
+                label: '',
+                placeholder: 'Search ' + f.options + '…',
+            },
+            parent: slot,
+            render_input: true,
+        });
+        ctrl.set_value(n.cfg[f.k] || '');
+        ctrl.$input.on('change awesomplete-selectcomplete', () => {
+            n.cfg[f.k] = ctrl.get_value();
+            renderNode(n);
+            // If the user just picked a doctype on a trigger node, refresh
+            // the toolbar's trigger indicator.
+            if (n.type === 'trigger_doctype' || n.type === 'frappe_create' ||
+                n.type === 'frappe_update' || n.type === 'frappe_fetch' ||
+                n.type === 'frappe_submit') {
+                refreshTriggerIndicator();
+            }
+        });
     });
 
     const delBtn = body.querySelector('[data-action="delete-node"]');
@@ -939,7 +1084,7 @@ function renderField(nodeId, f, val) {
     if (f.t === 'link') {
         return `<div class="fa-field">
             <label>${f.l}</label>
-            <input type="text" data-cfg-key="${f.k}" value="${escaped}" placeholder="${f.options}"/>
+            <div data-link-slot="${f.k}" class="fa-link-slot"></div>
         </div>`;
     }
     return `<div class="fa-field">
@@ -1104,14 +1249,68 @@ function loadTemplate(key) {
 function runWorkflow() {
     if (!state.currentWorkflow) {
         if (!confirm('Save before running?')) return;
-        // chain save → run
         return saveThenRun();
     }
+    // Inspect the canvas's trigger node to decide what payload the run needs.
+    const triggerNode = state.nodes.find(n => n.type && n.type.startsWith('trigger_'));
+    if (triggerNode && triggerNode.type === 'trigger_doctype') {
+        const dt = triggerNode.cfg.doctype;
+        if (!dt) {
+            frappe.msgprint('Pick a DocType on the trigger node first.');
+            return;
+        }
+        // Ask which record to run against
+        const d = new frappe.ui.Dialog({
+            title: `Run against a ${dt}`,
+            fields: [{
+                fieldname: 'record', fieldtype: 'Link', options: dt,
+                label: 'Select record', reqd: 1,
+                description: `The selected ${dt} will be passed as trigger.doc to the workflow.`,
+            }],
+            primary_action_label: 'Run now',
+            primary_action: vals => {
+                d.hide();
+                executeRun({ doctype: dt, name: vals.record });
+            },
+        });
+        d.show();
+        return;
+    }
+    // Webhook or schedule: optional JSON payload
+    if (triggerNode && (triggerNode.type === 'trigger_webhook' || triggerNode.type === 'trigger_schedule')) {
+        const d = new frappe.ui.Dialog({
+            title: 'Run workflow',
+            fields: [{
+                fieldname: 'payload', fieldtype: 'Code', options: 'JSON',
+                label: 'Mock payload (JSON, optional)',
+                default: '{}',
+            }],
+            primary_action_label: 'Run now',
+            primary_action: vals => {
+                d.hide();
+                let parsed = {};
+                try { parsed = JSON.parse(vals.payload || '{}'); }
+                catch (e) { frappe.msgprint('Payload must be valid JSON'); return; }
+                executeRun(parsed);
+            },
+        });
+        d.show();
+        return;
+    }
+    // Manual / no trigger node: just run with empty context
+    executeRun({});
+}
+
+function executeRun(payload) {
     addLog('Running…', 'info');
     document.querySelectorAll('.fa-node-status').forEach(s => s.style.background = 'var(--border-color)');
     frappe.call({
         method: 'flowagent.api.studio.run_workflow_now',
-        args: { name: state.currentWorkflow, sync: 1 },
+        args: {
+            name: state.currentWorkflow,
+            sync: 1,
+            payload: JSON.stringify(payload || {}),
+        },
         callback: r => {
             const run = r.message;
             if (!run) return;
@@ -1132,16 +1331,7 @@ function saveThenRun() {
         state.workflowName = n;
         document.getElementById('fa-wf-name').textContent = n;
     }
-    const triggerNode = state.nodes.find(n => n.type && n.type.startsWith('trigger_'));
-    if (triggerNode) {
-        if (triggerNode.type === 'trigger_doctype') {
-            state.trigger = { type: 'DocType Event',
-                              doctype: triggerNode.cfg.doctype,
-                              event: triggerNode.cfg.event };
-        } else if (triggerNode.type === 'trigger_schedule') {
-            state.trigger = { type: 'Schedule', cron: triggerNode.cfg.cron };
-        }
-    }
+    state.trigger = inferTriggerFromCanvas();
     const payload = {
         workflow_name: state.workflowName,
         enabled: state.enabled,
@@ -1155,6 +1345,7 @@ function saveThenRun() {
         args: { payload: JSON.stringify(payload) },
         callback: r => {
             state.currentWorkflow = r.message.name;
+            refreshTriggerIndicator();
             runWorkflow();
         },
     });
@@ -1222,6 +1413,36 @@ function openRun(name) {
             paintTrace(run);
         },
     });
+}
+
+function refreshTriggerIndicator() {
+    const el = document.getElementById('fa-trigger-indicator');
+    if (!el) return;
+    const trig = inferTriggerFromCanvas();
+    const enabled = state.enabled;
+    let txt = '';
+    let cls = 'fa-trigger-pill';
+    if (!enabled) {
+        txt = '○ Disabled';
+        cls += ' fa-trigger-off';
+    } else if (trig.type === 'DocType Event' && trig.doctype && trig.event) {
+        txt = `● Listening: ${trig.doctype} / ${trig.event}`;
+        cls += ' fa-trigger-on';
+    } else if (trig.type === 'Schedule' && trig.cron) {
+        txt = `● Schedule: ${trig.cron}`;
+        cls += ' fa-trigger-on';
+    } else if (trig.type === 'Webhook') {
+        txt = '● Webhook ready';
+        cls += ' fa-trigger-on';
+    } else if (trig.type === 'Manual') {
+        txt = '○ Manual';
+        cls += ' fa-trigger-off';
+    } else {
+        txt = '⚠ Trigger incomplete';
+        cls += ' fa-trigger-warn';
+    }
+    el.textContent = txt;
+    el.className = cls;
 }
 
 function refreshStats() {

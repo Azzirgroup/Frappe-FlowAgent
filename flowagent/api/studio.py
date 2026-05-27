@@ -139,6 +139,10 @@ def run_workflow_now(name: str, payload: str | None = None, sync: int = 0):
     sync=1 → run in this request and return the full result (good for the
               Studio's Run button so users see traces immediately).
     sync=0 → enqueue and return the queued run name.
+
+    If the payload is shaped {"doctype": "...", "name": "..."} we hydrate
+    the actual document and pass it as trigger.doc — this is how the
+    Studio's "Run against a record" dialog works.
     """
     _check_perm()
     parsed_payload = {}
@@ -147,6 +151,25 @@ def run_workflow_now(name: str, payload: str | None = None, sync: int = 0):
             parsed_payload = json.loads(payload) if isinstance(payload, str) else payload
         except json.JSONDecodeError:
             frappe.throw("payload must be valid JSON")
+
+    # Hydrate a {doctype, name} shape into a full trigger payload
+    if (isinstance(parsed_payload, dict)
+            and parsed_payload.get("doctype")
+            and parsed_payload.get("name")
+            and "doc" not in parsed_payload):
+        dt = parsed_payload["doctype"]
+        dn = parsed_payload["name"]
+        try:
+            doc = frappe.get_doc(dt, dn)
+            parsed_payload = {
+                "doc": doc.as_dict(no_default_fields=False),
+                "doc_name": doc.name,
+                "doctype": dt,
+                "event": "Manual",
+                "user": frappe.session.user,
+            }
+        except frappe.DoesNotExistError:
+            frappe.throw(f"{dt} {dn} does not exist")
 
     if cint(sync):
         from ..engine.runner import Runner
@@ -223,6 +246,116 @@ def recent_runs(workflow: str | None = None, limit: int = 20):
 
 @frappe.whitelist()
 def workflow_stats(workflow: str | None = None):
+    """Aggregate stats for the Studio's Stats tab."""
+    _check_perm()
+    filters = {}
+    if workflow:
+        filters["workflow"] = workflow
+    total = frappe.db.count("FlowAgent Workflow Run", filters)
+    ok = frappe.db.count("FlowAgent Workflow Run", {**filters, "status": "Success"})
+    err = frappe.db.count(
+        "FlowAgent Workflow Run",
+        {**filters, "status": ("in", ["Failed", "Timeout"])},
+    )
+    avg_ms = frappe.db.sql(
+        "SELECT AVG(duration_ms) FROM `tabFlowAgent Workflow Run` "
+        "WHERE status='Success'"
+        + (" AND workflow=%s" if workflow else ""),
+        (workflow,) if workflow else (),
+    )
+    avg = int(avg_ms[0][0] or 0) if avg_ms else 0
+    return {"runs": total, "ok": ok, "err": err, "avg_ms": avg}
+
+
+@frappe.whitelist()
+def diagnose(workflow: str | None = None):
+    """Health-check for the trigger pipeline.
+
+    Returns a structured report the Studio can render. Use this when a
+    workflow "doesn't fire" — it tells you whether the doc_events hook
+    is wired, whether the trigger index has rows, and whether the
+    workflow is enabled and well-formed.
+    """
+    _check_perm()
+    report = {"checks": [], "ok": True}
+
+    def check(name, ok, detail=""):
+        report["checks"].append({"name": name, "ok": bool(ok), "detail": detail})
+        if not ok:
+            report["ok"] = False
+
+    # 1. Is the wildcard doc_events hook loaded?
+    try:
+        hooks = frappe.get_hooks("doc_events", {}) or {}
+        wildcard = hooks.get("*", {})
+        has_hook = any(
+            "flowagent.triggers.doctype_dispatcher.on_event" in (
+                v if isinstance(v, list) else [v]
+            )
+            for v in wildcard.values()
+        )
+        check("doc_events wildcard registered", has_hook,
+              "Restart bench (bench restart) if this is False after install."
+              if not has_hook else "")
+    except Exception as e:
+        check("doc_events wildcard registered", False, str(e))
+
+    # 2. Trigger index table populated?
+    index_count = frappe.db.count("FlowAgent Workflow Trigger Index")
+    check(f"Trigger index has {index_count} row(s)", index_count > 0,
+          "If 0, no enabled DocType-Event workflows exist. Save and enable one."
+          if index_count == 0 else "")
+
+    # 3. Specific workflow diagnostics
+    if workflow:
+        try:
+            wf = frappe.get_doc("FlowAgent Workflow", workflow)
+            check(f"Workflow {workflow} exists", True)
+            check(f"  enabled = {bool(wf.enabled)}", bool(wf.enabled),
+                  "Toggle 'Enabled' and save."
+                  if not wf.enabled else "")
+            check(f"  trigger_type = {wf.trigger_type}", True)
+            if wf.trigger_type == "DocType Event":
+                check(f"  trigger_doctype = {wf.trigger_doctype or '∅'}",
+                      bool(wf.trigger_doctype),
+                      "Pick a DocType on the trigger node and save."
+                      if not wf.trigger_doctype else "")
+                check(f"  trigger_event = {wf.trigger_event or '∅'}",
+                      bool(wf.trigger_event),
+                      "Pick an event on the trigger node and save."
+                      if not wf.trigger_event else "")
+                # Index row?
+                idx = frappe.get_all(
+                    "FlowAgent Workflow Trigger Index",
+                    filters={"workflow": workflow},
+                    fields=["trigger_doctype", "trigger_event"],
+                )
+                check(f"  index row exists ({len(idx)})", len(idx) > 0,
+                      "Re-save the workflow to rebuild the index."
+                      if not idx else "")
+        except frappe.DoesNotExistError:
+            check(f"Workflow {workflow} exists", False)
+
+    # 4. Scheduler running? (proxy: did any scheduled job log a heartbeat?)
+    try:
+        from frappe.utils.scheduler import is_scheduler_inactive
+        scheduler_down = is_scheduler_inactive()
+        check("Scheduler enabled", not scheduler_down,
+              "Run: bench --site <site> enable-scheduler"
+              if scheduler_down else "")
+    except Exception:
+        pass  # not all Frappe versions expose this
+
+    # 5. Anthropic key set?
+    settings = frappe.get_single("FlowAgent Settings")
+    has_key = bool(settings.get_password("anthropic_api_key", raise_exception=False))
+    if not has_key:
+        has_key = bool(frappe.conf.get("anthropic_api_key"))
+    check("Anthropic API key configured", has_key,
+          "Set the key in FlowAgent Settings if you plan to use AI nodes."
+          if not has_key else "")
+
+    return report
     """Aggregate stats for the Studio's Stats tab."""
     _check_perm()
     filters = {}

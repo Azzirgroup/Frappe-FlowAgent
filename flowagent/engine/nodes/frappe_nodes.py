@@ -46,9 +46,24 @@ class UpdateDocNode(BaseExecutor):
     def run(self, *, node, cfg, context, runner):
         doctype = cfg.get("doctype")
         name = cfg.get("name") or context.get("doc_name") or context.get("doc", {}).get("name")
-        if not (doctype and name):
-            frappe.throw("frappe_update requires doctype and name")
+        if not doctype:
+            frappe.throw("frappe_update: 'DocType' is empty. Set it on the node.")
+        if not name:
+            raw_name = (node.get("cfg") or {}).get("name") or ""
+            hint = (
+                f" The template was: {raw_name!r}. If it contains "
+                f"{{{{trigger.doc.name}}}} or similar, the trigger context "
+                f"may be empty — run this workflow against an actual record "
+                f"via the 'Run' dialog or wait for it to fire from a real "
+                f"DocType event."
+            ) if "{{" in raw_name else ""
+            frappe.throw(f"frappe_update: 'Document name' resolved to empty.{hint}")
         values = _parse_dict(cfg.get("fields") or cfg.get("values"))
+        if not values:
+            frappe.throw(
+                "frappe_update: 'Fields' is empty or not valid JSON. "
+                "Provide a JSON object like {\"status\": \"Done\"}."
+            )
         doc = frappe.get_doc(doctype, name)
         for k, v in values.items():
             doc.set(k, v)

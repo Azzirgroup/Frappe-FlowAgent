@@ -43,8 +43,10 @@ FlowAgent fills that gap.
 bench get-app https://github.com/your-org/flowagent
 bench --site <yoursite> install-app flowagent
 bench --site <yoursite> migrate
-bench restart
+bench restart    # ← REQUIRED. The doc_events wildcard hook only loads after worker restart.
 ```
+
+If you skip `bench restart`, workflows will save and run manually but **will not fire automatically** when DocTypes change. Use the **Diagnose** button (stethoscope icon in the Studio toolbar) to verify the hook is loaded.
 
 Then set the Anthropic API key:
 
