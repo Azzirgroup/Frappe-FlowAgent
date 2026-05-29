@@ -43,7 +43,7 @@ It's the kind of tool you'd reach for n8n or Zapier for, except:
 - **Full Jinja in every config field** — `{{trigger.doc.field}}`, `{% for %}` loops, `{% if %}` conditionals, all Frappe utility helpers
 - **Background execution with inline fallback** — workflows run via `frappe.enqueue` for non-blocking saves; if Redis is unavailable, they run inline
 - **AI Build** — describe a workflow in English, get a fully-wired graph dropped on your canvas
-- **12 production-ready templates** spanning Sales, CRM, HR, Accounts, Support, Purchase, Inventory, Logistics
+- **24 production-ready templates** spanning Sales, CRM, HR, Accounts, Support, Purchase, Inventory, Logistics, Manufacturing, Projects, Assets, and Knowledge
 - **Step-by-step run traces** — every node's input, output, duration, and any undefined-variable warnings saved as a regular doc
 
 ---
@@ -140,6 +140,17 @@ With `allowed_doctypes: Sales Invoice, Customer` the agent will issue `list_docu
 | **Delivery WhatsApp Confirmation** | Delivery Note / On Submit | Sends personalised delivery confirmation to customer |
 | **Quotation Follow-up Bot** | Schedule daily 10am | AI-drafted follow-ups for stale open quotations |
 | **AI Review Responder** | Communication / On Insert | Drafts replies to negative feedback, creates a ToDo for human review |
+| **Work Order Delay Alert** | Schedule daily 8am | Flags delayed Work Orders with AI bottleneck analysis |
+| **Smart Stock Reorder** | Schedule daily 7am | AI agent recommends reorder quantities from consumption history |
+| **Leave Pattern Insights** | Schedule Monday 9am | Weekly summary of leave patterns, departmental clusters, repeat absentees |
+| **AI Project Status Reports** | Schedule Friday 4pm | Per-project status updates sent to customers using AI |
+| **New Customer Welcome** | Customer / On Insert | Personalised welcome email + onboarding ToDo for account manager |
+| **Asset Maintenance Insights** | Asset Maintenance Log / On Insert | AI categorises maintenance issues and escalates critical ones |
+| **Stale Lead Auto-Archive** | Schedule Monday 10am | AI decides whether to archive, cold-mark, or re-engage stale leads |
+| **Attendance Anomaly Detection** | Schedule daily 9:30am | Yesterday's attendance scanned for late clusters and repeat issues |
+| **Knowledge Base Auto-Tagger** | Article / On Insert | AI extracts topics + SEO description on every new KB article |
+| **Payment Reminder Bot** | Schedule Tuesday 11am | Tone-aware payment reminders that escalate with days overdue |
+| **Stock Reconciliation Audit** | Stock Reconciliation / On Submit | AI flags suspicious variances and creates audit ToDos |
 
 Each template is a starting point — load it, edit the doctype names, field references, and recipient details, then save.
 

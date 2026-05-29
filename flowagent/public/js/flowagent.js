@@ -455,6 +455,178 @@ const TEMPLATES = {
         ],
         trigger: { type: 'DocType Event', doctype: 'Communication', event: 'After Insert' },
     },
+
+    work_order_alert: {
+        name: 'Work Order Delay Alert',
+        category: 'Manufacturing',
+        icon: 'ti-tools',
+        accent: '#FB923C',
+        description: 'When a Work Order is delayed past its planned end date, summarise the bottleneck with AI and notify the production manager.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 8 * * *' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Work Order', filters: '{"status": "In Process", "planned_end_date": ["<", "{{ frappe.utils.nowdate() }}"]}', fields: 'name, production_item, qty, produced_qty, planned_end_date, status', limit: '50', output: 'delayed' } },
+            { t: 'logic_condition',  cfg: { expr: '{{delayed | length}} > 0' } },
+            { t: 'ai_llm',           cfg: { prompt: 'You are a production analyst. Given these delayed work orders, write a 5-line summary highlighting which items are most behind schedule and likely causes (low produced qty vs planned, age of delay).\n\n{% for wo in delayed %}- {{wo.name}}: {{wo.production_item}}, {{wo.produced_qty}}/{{wo.qty}} done, planned end {{wo.planned_end_date}}\n{% endfor %}', output: 'analysis' } },
+            { t: 'int_email',        cfg: { to: 'production@example.com', subject: 'Daily delayed Work Orders — {{ frappe.utils.nowdate() }}', body: '<div style="font-family:sans-serif"><h3>{{delayed | length}} Work Orders behind schedule</h3><p>{{analysis}}</p></div>' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 8 * * *' },
+    },
+
+    stock_reorder: {
+        name: 'Smart Stock Reorder',
+        category: 'Inventory',
+        icon: 'ti-package-import',
+        accent: '#38BDF8',
+        description: 'Daily check on items below reorder level. AI agent inspects recent consumption and drafts a Material Request.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 7 * * *' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Bin', filters: '{"actual_qty": ["<", 50]}', fields: 'item_code, warehouse, actual_qty, projected_qty', limit: '100', output: 'low_stock' } },
+            { t: 'logic_condition',  cfg: { expr: '{{low_stock | length}} > 0' } },
+            { t: 'ai_agent',         cfg: { task: 'For each item in the list below, fetch its average monthly consumption from Stock Ledger Entry and recommend a reorder quantity. Return a markdown table.\n\nItems:\n{% for s in low_stock %}- {{s.item_code}} @ {{s.warehouse}}: {{s.actual_qty}} on hand, {{s.projected_qty}} projected\n{% endfor %}', allowed_doctypes: 'Bin, Item, Stock Ledger Entry, Purchase Order Item', can_write: 'false', max_iters: '10', output: 'reorder_plan' } },
+            { t: 'int_email',        cfg: { to: 'purchasing@example.com', subject: 'Stock reorder recommendations', body: '<p>{{low_stock | length}} items below threshold. AI recommendations:</p><pre style="font-family:monospace">{{reorder_plan.text}}</pre>' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 7 * * *' },
+    },
+
+    leave_summarizer: {
+        name: 'Leave Pattern Insights',
+        category: 'HR',
+        icon: 'ti-calendar-off',
+        accent: '#10B981',
+        description: 'Weekly AI summary of leave patterns across the org, flagging unusual clusters or recurring absentees.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 9 * * 1' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Leave Application', filters: '{"status": "Approved", "from_date": [">", "{{ frappe.utils.add_days(frappe.utils.nowdate(), -7) }}"]}', fields: 'employee_name, leave_type, from_date, to_date, total_leave_days, department', limit: '200', output: 'leaves' } },
+            { t: 'ai_llm',           cfg: { prompt: 'You are an HR analyst. Given last week\'s approved leaves below, write a 5-line summary covering: 1) total leave-days, 2) which departments had the most absences, 3) any unusual clustering (e.g. same team off the same week), 4) recurring absentees.\n\n{% for l in leaves %}- {{l.employee_name}} ({{l.department}}): {{l.leave_type}}, {{l.from_date}} to {{l.to_date}} ({{l.total_leave_days}} days)\n{% endfor %}', output: 'leave_summary' } },
+            { t: 'int_email',        cfg: { to: 'hr@example.com', subject: 'Weekly leave summary — week of {{ frappe.utils.nowdate() }}', body: '{{leave_summary}}' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 9 * * 1' },
+    },
+
+    project_status: {
+        name: 'AI Project Status Reports',
+        category: 'Projects',
+        icon: 'ti-progress-check',
+        accent: '#38BDF8',
+        description: 'Generate weekly project status updates per active Project, summarising recent task activity and flagging blockers.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 16 * * 5' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Project', filters: '{"status": "Open"}', fields: 'name, project_name, percent_complete, expected_end_date, customer', limit: '30', output: 'projects' } },
+            { t: 'logic_loop',       cfg: { items: '{{projects}}', item_var: 'project', max_items: '30' } },
+            { t: 'ai_agent',         cfg: { task: 'For project {{project.name}} ({{project.project_name}}, currently {{project.percent_complete}}% done), look up the most recent 10 Tasks and ToDos linked to it. Write a 4-bullet status update: recent wins, in-progress items, blockers, next-week focus.', allowed_doctypes: 'Project, Task, ToDo, Timesheet', can_write: 'false', max_iters: '8', output: 'status' } },
+            { t: 'int_email',        cfg: { to: '{{project.customer}}', subject: 'Project update: {{project.project_name}}', body: '<h3>{{project.project_name}}</h3><p>Status: {{project.percent_complete}}% complete · Target: {{project.expected_end_date}}</p><div>{{status.text}}</div>' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 16 * * 5' },
+    },
+
+    customer_welcome: {
+        name: 'New Customer Welcome',
+        category: 'CRM',
+        icon: 'ti-confetti',
+        accent: '#F472B6',
+        description: 'When a new Customer is created, generate a personalised welcome email and create an onboarding ToDo for the account manager.',
+        nodes: [
+            { t: 'trigger_doctype', cfg: { doctype: 'Customer', event: 'After Insert' } },
+            { t: 'ai_llm',          cfg: { prompt: 'Write a warm, professional welcome email (4-5 sentences) for our new customer {{trigger.doc.customer_name}} ({{trigger.doc.customer_type}} from {{trigger.doc.territory}}). Mention they can reach out anytime and that an account manager will be in touch. Sign off as "The {{trigger.doc.customer_group}} team".', output: 'welcome_body' } },
+            { t: 'int_email',       cfg: { to: '{{trigger.doc.email_id}}', subject: 'Welcome to our family, {{trigger.doc.customer_name}}!', body: '{{welcome_body}}' } },
+            { t: 'frappe_create',   cfg: { doctype: 'ToDo', values: '{"description": "Schedule onboarding call with {{trigger.doc.customer_name}}", "reference_type": "Customer", "reference_name": "{{trigger.doc.name}}", "priority": "Medium", "date": "{{ frappe.utils.add_days(frappe.utils.nowdate(), 2) }}"}' } },
+        ],
+        trigger: { type: 'DocType Event', doctype: 'Customer', event: 'After Insert' },
+    },
+
+    asset_maintenance: {
+        name: 'Asset Maintenance Insights',
+        category: 'Assets',
+        icon: 'ti-tool',
+        accent: '#FB923C',
+        description: 'When an Asset Maintenance Log is filed, AI categorises the issue and updates the asset\'s health notes.',
+        nodes: [
+            { t: 'trigger_doctype', cfg: { doctype: 'Asset Maintenance Log', event: 'After Insert' } },
+            { t: 'ai_extract',      cfg: { source: 'Maintenance type: {{trigger.doc.maintenance_type}}\nDescription: {{trigger.doc.description}}\nActions taken: {{trigger.doc.actions_performed}}', fields: '{"severity": "Low | Medium | High | Critical", "category": "Routine | Repair | Replacement | Inspection", "next_check_days": "integer — days until next recommended check"}', output: 'analysis' } },
+            { t: 'frappe_update',   cfg: { doctype: 'Asset Maintenance Log', name: '{{trigger.doc.name}}', fields: '{"custom_severity": "{{analysis.severity}}", "custom_category": "{{analysis.category}}"}' } },
+            { t: 'logic_condition', cfg: { expr: '"{{analysis.severity}}" in ["High", "Critical"]' } },
+            { t: 'int_slack',       cfg: { channel: '#maintenance', message: '⚠️ *{{analysis.severity}}* asset issue: {{trigger.doc.asset_name}} — {{trigger.doc.description}}' } },
+        ],
+        trigger: { type: 'DocType Event', doctype: 'Asset Maintenance Log', event: 'After Insert' },
+    },
+
+    stale_lead_cleanup: {
+        name: 'Stale Lead Auto-Archive',
+        category: 'CRM',
+        icon: 'ti-archive',
+        accent: '#94A3B8',
+        description: 'Weekly review of leads with no activity in 60 days. AI decides whether to archive, mark cold, or trigger a re-engagement email.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 10 * * 1' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Lead', filters: '{"status": "Open", "modified": ["<", "{{ frappe.utils.add_days(frappe.utils.nowdate(), -60) }}"]}', fields: 'name, lead_name, company_name, email_id, notes, status', limit: '100', output: 'stale_leads' } },
+            { t: 'logic_loop',       cfg: { items: '{{stale_leads}}', item_var: 'lead', max_items: '100' } },
+            { t: 'ai_classify',      cfg: { text: 'Lead: {{lead.lead_name}} at {{lead.company_name}}. Notes: {{lead.notes}}. No activity in 60+ days.', categories: 'archive, re-engage, mark cold', instructions: 'archive = clearly dead (no engagement signals). re-engage = had genuine interest, worth one more email. mark cold = some signal but lower priority.', output: 'decision' } },
+            { t: 'logic_condition',  cfg: { expr: '"{{decision}}" == "re-engage"' } },
+            { t: 'ai_llm',           cfg: { prompt: 'Write a short (4 line), no-pressure re-engagement email to {{lead.lead_name}} at {{lead.company_name}}. Lead with curiosity, not a sales pitch.', output: 'reengage_body' } },
+            { t: 'int_email',        cfg: { to: '{{lead.email_id}}', subject: 'Checking in, {{lead.lead_name}}', body: '{{reengage_body}}' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 10 * * 1' },
+    },
+
+    attendance_anomaly: {
+        name: 'Attendance Anomaly Detection',
+        category: 'HR',
+        icon: 'ti-clock-pause',
+        accent: '#F59E0B',
+        description: 'Daily scan of yesterday\'s Attendance records. AI flags unusual patterns — late arrivals clusters, unauthorised absences, repeat offenders.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '30 9 * * *' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Attendance', filters: '{"attendance_date": "{{ frappe.utils.add_days(frappe.utils.nowdate(), -1) }}"}', fields: 'employee_name, status, working_hours, late_entry, early_exit, department', limit: '500', output: 'yesterday_att' } },
+            { t: 'ai_llm',           cfg: { prompt: 'Analyse yesterday\'s attendance records below. Surface in 4-6 bullets: 1) total absences, 2) departments with notable issues, 3) repeat late-entry employees, 4) anything that warrants HR attention. Be concise; don\'t list every employee.\n\n{% for a in yesterday_att %}- {{a.employee_name}} ({{a.department}}): {{a.status}}, {{a.working_hours}}h{% if a.late_entry %} (late){% endif %}{% if a.early_exit %} (early-exit){% endif %}\n{% endfor %}', output: 'att_report' } },
+            { t: 'int_email',        cfg: { to: 'hr@example.com', subject: 'Daily attendance brief — {{ frappe.utils.add_days(frappe.utils.nowdate(), -1) }}', body: '{{att_report}}' } },
+        ],
+        trigger: { type: 'Schedule', cron: '30 9 * * *' },
+    },
+
+    kb_autotag: {
+        name: 'Knowledge Base Auto-Tagger',
+        category: 'Support',
+        icon: 'ti-tags',
+        accent: '#10B981',
+        description: 'When a new Article is created, AI extracts topics and writes a one-paragraph SEO description.',
+        nodes: [
+            { t: 'trigger_doctype', cfg: { doctype: 'Article', event: 'After Insert' } },
+            { t: 'ai_extract',      cfg: { source: 'Title: {{trigger.doc.title}}\nContent: {{trigger.doc.content}}', fields: '{"tags": "comma-separated topical tags, lowercase, max 6", "seo_description": "single paragraph 150-160 chars, plain text", "audience": "Developer | End user | Admin | Mixed"}', output: 'meta' } },
+            { t: 'frappe_update',   cfg: { doctype: 'Article', name: '{{trigger.doc.name}}', fields: '{"custom_ai_tags": "{{meta.tags}}", "meta_description": "{{meta.seo_description}}", "custom_audience": "{{meta.audience}}"}' } },
+        ],
+        trigger: { type: 'DocType Event', doctype: 'Article', event: 'After Insert' },
+    },
+
+    payment_followup: {
+        name: 'Payment Reminder Bot',
+        category: 'Accounts',
+        icon: 'ti-cash',
+        accent: '#F59E0B',
+        description: 'Every Tuesday, send AI-personalised payment reminders for invoices overdue 7, 14, and 30 days with escalating tone.',
+        nodes: [
+            { t: 'trigger_schedule', cfg: { cron: '0 11 * * 2' } },
+            { t: 'frappe_fetch',     cfg: { doctype: 'Sales Invoice', filters: '{"status": "Overdue", "docstatus": 1}', fields: 'name, customer_name, contact_email, grand_total, due_date, outstanding_amount', limit: '200', output: 'overdue' } },
+            { t: 'logic_loop',       cfg: { items: '{{overdue}}', item_var: 'inv', max_items: '200' } },
+            { t: 'ai_llm',           cfg: { prompt: 'Compose a payment reminder email to {{inv.customer_name}} for invoice {{inv.name}} (₹{{inv.outstanding_amount}} outstanding, due {{inv.due_date}}).\n\nMatch the tone to how overdue it is: under 14 days = polite reminder, 14-30 days = firmer with clear payment instructions, over 30 days = formal escalation mentioning potential service hold.\n\nKeep it under 6 lines. Sign off as "Accounts Receivable".', output: 'reminder_body' } },
+            { t: 'int_email',        cfg: { to: '{{inv.contact_email}}', subject: 'Payment reminder: {{inv.name}}', body: '{{reminder_body}}' } },
+        ],
+        trigger: { type: 'Schedule', cron: '0 11 * * 2' },
+    },
+
+    stock_recon_audit: {
+        name: 'Stock Reconciliation Audit',
+        category: 'Inventory',
+        icon: 'ti-clipboard-check',
+        accent: '#FB923C',
+        description: 'When a Stock Reconciliation is submitted, AI flags items with unusual variance and creates audit ToDos.',
+        nodes: [
+            { t: 'trigger_doctype', cfg: { doctype: 'Stock Reconciliation', event: 'After Submit' } },
+            { t: 'ai_llm',          cfg: { prompt: 'You are an inventory auditor. Inspect this stock reconciliation. For each item, calculate the variance (qty - current_qty). Flag any item with absolute variance > 10 or value variance > ₹10,000. Reply with a markdown list of flagged items only; if none, reply "No anomalies".\n\nReconciled items:\n{% for item in trigger.doc.items %}- {{item.item_code}} @ {{item.warehouse}}: counted {{item.qty}}, system {{item.current_qty}}, valuation ₹{{item.valuation_rate}}\n{% endfor %}', output: 'audit' } },
+            { t: 'logic_condition', cfg: { expr: '"No anomalies" not in "{{audit}}"' } },
+            { t: 'frappe_create',   cfg: { doctype: 'ToDo', values: '{"description": "Audit Stock Reconciliation {{trigger.doc.name}}: {{audit}}", "reference_type": "Stock Reconciliation", "reference_name": "{{trigger.doc.name}}", "priority": "High"}' } },
+        ],
+        trigger: { type: 'DocType Event', doctype: 'Stock Reconciliation', event: 'After Submit' },
+    },
 };
 
 // ============================================================
