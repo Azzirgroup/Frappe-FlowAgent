@@ -9,7 +9,9 @@ app_publisher = "FlowAgent"
 app_description = "Visual AI Workflow Automation for Frappe — drag-and-drop builder with AI agents, DocType triggers, and multi-step orchestration"
 app_email = "hello@flowagent.dev"
 app_license = "MIT"
-required_apps = ["frappe"]
+# Newer bench versions parse required_apps with NPM-style semver ranges.
+# Format: "<app_name>@<range>", e.g. "frappe@>=15.0.0".
+required_apps = ["frappe@>=15.0.0"]
 
 # Includes
 # ----------------------------------------------------------------------
