@@ -31,7 +31,8 @@
   "last_run_at",
   "column_break_meta",
   "total_runs",
-  "webhook_path"
+  "webhook_path",
+  "webhook_hmac_secret"
  ],
  "fields": [
   {
@@ -202,6 +203,13 @@
    "fieldtype": "Data",
    "label": "Webhook Path",
    "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.trigger_type=='Webhook'",
+   "description": "Optional. Set this to enable HMAC-SHA256 signature verification. Inbound requests must include X-Signature-256: sha256=<hex> where the HMAC is computed over the raw request body using this secret. Stripe, GitHub, Razorpay, etc. all sign webhooks this way.",
+   "fieldname": "webhook_hmac_secret",
+   "fieldtype": "Password",
+   "label": "HMAC Secret (optional)"
   }
  ],
  "index_web_pages_for_search": 0,

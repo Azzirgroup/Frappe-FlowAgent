@@ -23,11 +23,15 @@ class FlowAgentWorkflow(Document):
     def after_save(self):
         # Re-index trigger bindings so the dispatcher can find this workflow fast.
         _rebuild_trigger_index(self)
+        # Snapshot a version. We use a hash-based dedupe so spam-clicking Save
+        # doesn't produce a thousand identical versions.
+        _maybe_snapshot_version(self)
 
     def on_trash(self):
         frappe.db.delete("FlowAgent Workflow Trigger Index", {"workflow": self.name})
-        # Cascade delete runs (Frappe's link_handling won't do this for us
-        # because the runs reference us via Data not Link).
+        # Cascade delete versions and runs
+        for v in frappe.get_all("FlowAgent Workflow Version", filters={"workflow": self.name}, pluck="name"):
+            frappe.delete_doc("FlowAgent Workflow Version", v, ignore_permissions=True, force=True)
         for run in frappe.get_all("FlowAgent Workflow Run", filters={"workflow": self.name}, pluck="name"):
             frappe.delete_doc("FlowAgent Workflow Run", run, ignore_permissions=True, force=True)
 
@@ -132,3 +136,60 @@ def _rebuild_trigger_index(wf: "FlowAgentWorkflow"):
         )
         # Re-raise so the caller (save_workflow) can surface it
         raise
+
+
+def _maybe_snapshot_version(wf):
+    """Snapshot the workflow into FlowAgent Workflow Version, but only if
+    the graph actually changed since the last snapshot. This keeps the
+    history meaningful — saving without edits doesn't create noise."""
+    import hashlib
+
+    # Fingerprint the current state. We hash the canonical JSON so equivalent
+    # graphs (same keys, same order) produce the same digest.
+    payload = json.dumps({
+        "nodes": json.loads(wf.nodes_json or "[]"),
+        "edges": json.loads(wf.edges_json or "[]"),
+        "trigger_type": wf.trigger_type,
+        "trigger_doctype": wf.trigger_doctype,
+        "trigger_event": wf.trigger_event,
+        "cron": wf.cron,
+    }, sort_keys=True)
+    digest = hashlib.sha1(payload.encode()).hexdigest()
+
+    # Compare with the most recent version's digest (stored in version_label).
+    last = frappe.get_all(
+        "FlowAgent Workflow Version",
+        filters={"workflow": wf.name},
+        fields=["name", "version_label"],
+        order_by="creation desc",
+        limit=1,
+    )
+    if last and last[0].version_label and last[0].version_label.endswith(digest[:8]):
+        return  # no change since last snapshot
+
+    # Count existing versions for a friendly label (v1, v2, ...)
+    count = frappe.db.count("FlowAgent Workflow Version", {"workflow": wf.name})
+    label = f"v{count + 1}-{digest[:8]}"
+
+    try:
+        ver = frappe.new_doc("FlowAgent Workflow Version")
+        ver.workflow = wf.name
+        ver.version_label = label
+        ver.created_by_user = frappe.session.user
+        ver.message = ""  # blank for auto-snapshots; user can edit later
+        ver.nodes_json = wf.nodes_json
+        ver.edges_json = wf.edges_json
+        ver.trigger_json = json.dumps({
+            "type": wf.trigger_type,
+            "doctype": wf.trigger_doctype,
+            "event": wf.trigger_event,
+            "cron": wf.cron,
+        })
+        ver.viewport_json = wf.viewport_json or "{}"
+        ver.insert(ignore_permissions=True)
+    except Exception as e:
+        # Versioning is best-effort; don't break the save if it fails.
+        frappe.log_error(
+            title=f"FlowAgent: failed to snapshot version for {wf.name}",
+            message=f"{type(e).__name__}: {e}",
+        )

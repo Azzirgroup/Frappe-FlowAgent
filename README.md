@@ -44,7 +44,25 @@ It's the kind of tool you'd reach for n8n or Zapier for, except:
 - **Background execution with inline fallback** — workflows run via `frappe.enqueue` for non-blocking saves; if Redis is unavailable, they run inline
 - **AI Build** — describe a workflow in English, get a fully-wired graph dropped on your canvas
 - **24 production-ready templates** spanning Sales, CRM, HR, Accounts, Support, Purchase, Inventory, Logistics, Manufacturing, Projects, Assets, and Knowledge
-- **Step-by-step run traces** — every node's input, output, duration, and any undefined-variable warnings saved as a regular doc
+
+**Safe iteration**
+
+- **Test mode (dry run)** — preview workflows without writing data or hitting external services. AI calls and reads still run for real so you see actual outputs
+- **Step-by-step run trace inspector** — every node's input, output, duration, and any render warnings; click any value in the tree to copy its Jinja path
+- **Live streaming during execution** — nodes light up on the canvas as each step completes; no need to wait for the full run to finish to see what's happening
+- **Replay** — re-run a previous run with the same payload to debug iteratively
+- **Workflow versioning** — every Save snapshots the graph; list, annotate, and restore previous versions with one click
+- **Undo / redo on the canvas** — `Cmd/Ctrl + Z` works as you expect; 50-step history
+- **Render warnings on the canvas** — yellow badge on any node that referenced a missing template variable
+- **Bulk re-trigger** — apply a new workflow retroactively to last month's records; defaults to dry run
+- **Health dashboard** — sparkline of the last 50 runs plus the top failing error messages per workflow
+- **Export / import templates** — save your own workflows as templates, share them as JSON files
+
+**Production-ready observability**
+
+- **AI cost tracking** — every run records input/output tokens and estimated USD cost across all six AI node types; cumulative totals per workflow on the Stats tab
+- **Per-node retry config** — mark flaky integrations (HTTP, Sheets, AI) as retry-3 while keeping write nodes at retry-0; configurable backoff delay
+- **Webhook HMAC verification** — optional per-workflow signing secret validates `X-Signature-256` against HMAC-SHA256 of the raw body, matching GitHub/Razorpay/generic webhook conventions
 
 ---
 
@@ -166,7 +184,15 @@ POST {site}/api/method/flowagent.api.webhook.handle?path={webhook_path}&token={w
 
 Or send the token as `X-FlowAgent-Token` header. The full request body becomes `{{body}}` in the workflow context.
 
-Rotate the secret in **FlowAgent Settings → Regenerate Secret** (invalidates all existing webhook URLs).
+Rotate the global secret in **FlowAgent Settings → Regenerate Secret** (invalidates all existing webhook URLs).
+
+**HMAC signature verification (optional).** For integrations that sign their payloads — GitHub, Razorpay, generic provider webhooks — set **HMAC Secret** on the workflow. Inbound requests must then include:
+
+```
+X-Signature-256: sha256=<hex digest of HMAC-SHA256(secret, raw_body)>
+```
+
+`X-Hub-Signature-256` is also accepted (GitHub-style). Mismatched signatures get a 403; missing header gets a 401. The global token still applies in addition.
 
 ---
 
@@ -305,12 +331,14 @@ Adding a new node type takes 5 minutes:
 
 ## Roadmap
 
-`v0.1.x` is the current functional release. On deck for `v0.2`:
+The current release adds live run streaming, AI cost tracking, per-node retry configuration, and webhook HMAC verification on top of the existing safe-iteration feature set (versioning, undo/redo, dry-run, replay, trace inspector, bulk re-trigger, health dashboard, exportable templates).
+
+On deck:
 - Per-node timeouts (currently global only)
-- Workflow versioning & rollback
-- Visual diff and undo on the canvas
-- Test runs with mock payloads
-- Bulk re-trigger of past doc events
+- Visual diff between workflow versions
+- Sub-workflows — one workflow invoking another as a reusable fragment
+- Per-workflow integration credentials (override site-wide keys)
+- Workflow concurrency controls (queue / single-flight / coalesce)
 
 ---
 

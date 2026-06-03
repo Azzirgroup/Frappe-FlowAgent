@@ -33,7 +33,15 @@ class EmailNode(BaseExecutor):
             recipients = [r.strip() for r in recipients.split(",") if r.strip()]
         if not recipients:
             frappe.throw("int_email requires 'to'")
-
+        if runner.dry_run:
+            return {
+                "_dry_run": True,
+                "would_email": {
+                    "to": recipients,
+                    "subject": cfg.get("subject"),
+                    "body_preview": (cfg.get("body") or "")[:200],
+                },
+            }
         frappe.sendmail(
             recipients=recipients,
             subject=cfg.get("subject") or "(no subject)",
@@ -61,6 +69,11 @@ class WhatsAppNode(BaseExecutor):
         message = cfg.get("message")
         if not (to and message):
             frappe.throw("int_whatsapp requires 'to' and 'message'")
+        if runner.dry_run:
+            return {
+                "_dry_run": True,
+                "would_whatsapp": {"to": to, "message": message[:200]},
+            }
 
         phone_id = frappe.conf.get("whatsapp_phone_id")
         token = frappe.conf.get("whatsapp_access_token")
@@ -108,6 +121,14 @@ class HTTPNode(BaseExecutor):
                 body = json.loads(body_raw) if isinstance(body_raw, str) else body_raw
             except json.JSONDecodeError:
                 body = body_raw  # raw string body
+
+        if runner.dry_run and method != "GET":
+            # GET is read-only, so we still let it through. Other methods
+            # could mutate the remote — skip them.
+            return {
+                "_dry_run": True,
+                "would_http": {"method": method, "url": url, "body_preview": str(body)[:200]},
+            }
 
         headers_raw = cfg.get("headers")
         headers = {}
@@ -163,6 +184,11 @@ class SlackNode(BaseExecutor):
                 "site_config.json or supply 'webhook_url' on the node."
             )
         message = cfg.get("message") or "(empty message)"
+        if runner.dry_run:
+            return {
+                "_dry_run": True,
+                "would_slack": {"channel": cfg.get("channel"), "message": message[:200]},
+            }
         payload = {"text": message}
         if cfg.get("channel"):
             payload["channel"] = cfg["channel"]
@@ -190,6 +216,14 @@ class SheetsNode(BaseExecutor):
         rng = cfg.get("range") or "Sheet1!A:Z"
         if not sheet_id:
             frappe.throw("int_sheets requires 'sheet_id'")
+
+        # Read is non-destructive; let it run in dry mode so downstream nodes
+        # have realistic data. Writes get short-circuited.
+        if runner.dry_run and action != "Read range":
+            return {
+                "_dry_run": True,
+                "would_sheets": {"action": action, "sheet_id": sheet_id, "range": rng},
+            }
 
         token = self._get_access_token()
         base = f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{rng}"
@@ -298,6 +332,11 @@ class RazorpayNode(BaseExecutor):
                 "Razorpay credentials missing. Set razorpay_key_id and "
                 "razorpay_key_secret in site_config.json."
             )
+        if runner.dry_run and action != "Fetch payment":
+            return {
+                "_dry_run": True,
+                "would_razorpay": {"action": action, "amount": cfg.get("amount")},
+            }
         auth = (key, secret)
 
         if action == "Create order":

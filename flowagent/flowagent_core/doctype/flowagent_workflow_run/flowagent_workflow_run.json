@@ -12,6 +12,10 @@
   "started_at",
   "ended_at",
   "duration_ms",
+  "ai_calls",
+  "ai_tokens_in",
+  "ai_tokens_out",
+  "ai_cost_usd",
   "section_payload",
   "trigger_payload",
   "final_context",
@@ -65,6 +69,31 @@
    "fieldtype": "Int",
    "in_list_view": 1,
    "label": "Duration (ms)"
+  },
+  {
+   "fieldname": "ai_calls",
+   "fieldtype": "Int",
+   "label": "AI Calls",
+   "default": 0
+  },
+  {
+   "fieldname": "ai_tokens_in",
+   "fieldtype": "Int",
+   "label": "AI Input Tokens",
+   "default": 0
+  },
+  {
+   "fieldname": "ai_tokens_out",
+   "fieldtype": "Int",
+   "label": "AI Output Tokens",
+   "default": 0
+  },
+  {
+   "fieldname": "ai_cost_usd",
+   "fieldtype": "Float",
+   "label": "AI Cost (USD)",
+   "precision": "6",
+   "default": 0
   },
   {
    "collapsible": 1,

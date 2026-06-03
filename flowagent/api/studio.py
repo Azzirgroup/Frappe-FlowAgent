@@ -226,12 +226,17 @@ def delete_workflow(name: str):
 # Running & runs
 # -------------------------------------------------------------------------
 @frappe.whitelist()
-def run_workflow_now(name: str, payload: str | None = None, sync: int = 0):
+def run_workflow_now(name: str, payload: str | None = None, sync: int = 0, dry_run: int = 0):
     """Manually fire a workflow.
 
     sync=1 → run in this request and return the full result (good for the
               Studio's Run button so users see traces immediately).
     sync=0 → enqueue and return the queued run name.
+
+    dry_run=1 → write nodes (Frappe create/update/submit/script) and
+                integrations (email, WhatsApp, Slack, HTTP POST, Sheets writes,
+                Razorpay create) DO NOT execute. AI nodes, fetches, and reads
+                still run so you can preview the full data flow safely.
 
     If the payload is shaped {"doctype": "...", "name": "..."} we hydrate
     the actual document and pass it as trigger.doc — this is how the
@@ -264,27 +269,48 @@ def run_workflow_now(name: str, payload: str | None = None, sync: int = 0):
         except frappe.DoesNotExistError:
             frappe.throw(f"{dt} {dn} does not exist")
 
+    is_dry = bool(cint(dry_run))
+    trigger_source = "studio_dry_run" if is_dry else "studio_manual"
+
     if cint(sync):
         from ..engine.runner import Runner
         run_name = Runner(
             workflow_name=name,
-            trigger_source="studio_manual",
+            trigger_source=trigger_source,
             payload=parsed_payload,
             user=frappe.session.user,
+            dry_run=is_dry,
         ).execute()
         return get_run(run_name)
 
-    # Async enqueue
+    # Async enqueue. Pre-create the Run doc here (and commit) so the
+    # client receives its name immediately and can start polling for
+    # streamed step updates. The background runner adopts it via
+    # existing_run_name.
+    run_doc = frappe.get_doc({
+        "doctype": "FlowAgent Workflow Run",
+        "workflow": name,
+        "status": "Queued",
+        "trigger_source": trigger_source,
+        "started_at": frappe.utils.now_datetime(),
+        "trigger_payload": json.dumps(parsed_payload, default=str)[:140000],
+    })
+    run_doc.flags.ignore_permissions = True
+    run_doc.insert(ignore_permissions=True)
+    frappe.db.commit()
+
     frappe.enqueue(
         "flowagent.engine.run_workflow_background",
         queue="default",
         timeout=600,
         workflow_name=name,
-        trigger_source="studio_manual",
+        trigger_source=trigger_source,
         payload=parsed_payload,
         user=frappe.session.user,
+        dry_run=is_dry,
+        existing_run_name=run_doc.name,
     )
-    return {"queued": True}
+    return {"queued": True, "run_name": run_doc.name}
 
 
 @frappe.whitelist()
@@ -300,6 +326,10 @@ def get_run(run_name: str):
         "started_at": str(doc.started_at) if doc.started_at else None,
         "ended_at": str(doc.ended_at) if doc.ended_at else None,
         "duration_ms": doc.duration_ms,
+        "ai_calls": doc.get("ai_calls") or 0,
+        "ai_tokens_in": doc.get("ai_tokens_in") or 0,
+        "ai_tokens_out": doc.get("ai_tokens_out") or 0,
+        "ai_cost_usd": float(doc.get("ai_cost_usd") or 0),
         "trigger_payload": _json_or_default(doc.trigger_payload, {}),
         "final_context": _json_or_default(doc.final_context, {}),
         "error_message": doc.error_message,
@@ -339,7 +369,15 @@ def recent_runs(workflow: str | None = None, limit: int = 20):
 
 @frappe.whitelist()
 def workflow_stats(workflow: str | None = None):
-    """Aggregate stats for the Studio's Stats tab."""
+    """Aggregate stats for the Studio's Stats tab.
+
+    Returns:
+        runs, ok, err, avg_ms — totals
+        last_50 — list of {status, duration_ms} for the most recent 50 runs,
+                  oldest first (so the sparkline draws left-to-right)
+        top_errors — list of {error, count} for the most common failure
+                     messages (first line only)
+    """
     _check_perm()
     filters = {}
     if workflow:
@@ -357,7 +395,62 @@ def workflow_stats(workflow: str | None = None):
         (workflow,) if workflow else (),
     )
     avg = int(avg_ms[0][0] or 0) if avg_ms else 0
-    return {"runs": total, "ok": ok, "err": err, "avg_ms": avg}
+
+    # Last 50 runs for sparkline (oldest first for left-to-right display)
+    last_50_rows = frappe.get_all(
+        "FlowAgent Workflow Run",
+        filters=filters,
+        fields=["status", "duration_ms"],
+        order_by="creation desc",
+        limit=50,
+    )
+    last_50 = list(reversed(last_50_rows))
+
+    # Top error messages (first line, no traceback)
+    top_errors = []
+    if err:
+        error_rows = frappe.get_all(
+            "FlowAgent Workflow Run",
+            filters={**filters, "status": ("in", ["Failed", "Timeout"]), "error_message": ("is", "set")},
+            fields=["error_message"],
+            order_by="creation desc",
+            limit=200,
+        )
+        counts: dict[str, int] = {}
+        for r in error_rows:
+            first_line = (r.error_message or "").split("\n")[0][:140].strip()
+            if not first_line:
+                continue
+            counts[first_line] = counts.get(first_line, 0) + 1
+        top_errors = [
+            {"error": e, "count": c}
+            for e, c in sorted(counts.items(), key=lambda x: -x[1])[:3]
+        ]
+
+    # Cumulative AI usage across all runs of this workflow.
+    where_clause = ""
+    params: tuple = ()
+    if workflow:
+        where_clause = "WHERE workflow=%s"
+        params = (workflow,)
+    usage_row = frappe.db.sql(
+        f"SELECT COALESCE(SUM(ai_calls), 0), COALESCE(SUM(ai_tokens_in), 0), "
+        f"       COALESCE(SUM(ai_tokens_out), 0), COALESCE(SUM(ai_cost_usd), 0) "
+        f"FROM `tabFlowAgent Workflow Run` {where_clause}",
+        params,
+    )
+    if usage_row and usage_row[0]:
+        ai_calls_total, ai_in_total, ai_out_total, ai_cost_total = usage_row[0]
+    else:
+        ai_calls_total = ai_in_total = ai_out_total = ai_cost_total = 0
+
+    return {
+        "runs": total, "ok": ok, "err": err, "avg_ms": avg,
+        "last_50": last_50, "top_errors": top_errors,
+        "ai_calls_total":  int(ai_calls_total or 0),
+        "ai_tokens_total": int((ai_in_total or 0) + (ai_out_total or 0)),
+        "ai_cost_total":   float(ai_cost_total or 0),
+    }
 
 
 @frappe.whitelist()
@@ -480,3 +573,205 @@ def _json_or_default(raw, default):
         return json.loads(raw)
     except (TypeError, ValueError):
         return default
+
+
+# =================================================================
+# Versioning
+# =================================================================
+@frappe.whitelist()
+def list_versions(workflow: str):
+    """Return all versions of a workflow, most recent first."""
+    _check_perm()
+    if not workflow:
+        return []
+    rows = frappe.get_all(
+        "FlowAgent Workflow Version",
+        filters={"workflow": workflow},
+        fields=["name", "version_label", "message", "created_by_user", "creation"],
+        order_by="creation desc",
+        limit=50,
+    )
+    # Count nodes per version for the UI (cheap-ish — one query each, capped at 50)
+    for r in rows:
+        nodes_json = frappe.db.get_value("FlowAgent Workflow Version", r.name, "nodes_json")
+        try:
+            r["node_count"] = len(json.loads(nodes_json or "[]"))
+        except Exception:
+            r["node_count"] = 0
+    return rows
+
+
+@frappe.whitelist()
+def get_version(version: str):
+    """Fetch one version's full snapshot."""
+    _check_perm()
+    v = frappe.get_doc("FlowAgent Workflow Version", version)
+    return {
+        "name": v.name,
+        "workflow": v.workflow,
+        "version_label": v.version_label,
+        "message": v.message,
+        "created_by_user": v.created_by_user,
+        "creation": v.creation,
+        "nodes": json.loads(v.nodes_json or "[]"),
+        "edges": json.loads(v.edges_json or "[]"),
+        "trigger": json.loads(v.trigger_json or "{}"),
+        "viewport": json.loads(v.viewport_json or "{}"),
+    }
+
+
+@frappe.whitelist()
+def restore_version(version: str):
+    """Restore a version's snapshot onto its parent workflow.
+
+    This creates a new snapshot (the pre-restore state) automatically via
+    the workflow's after_save hook, so restoration is itself reversible.
+    """
+    _check_perm()
+    v = frappe.get_doc("FlowAgent Workflow Version", version)
+    wf = frappe.get_doc("FlowAgent Workflow", v.workflow)
+    # Copy snapshot fields back. We don't touch enabled/workflow_name etc
+    # so a restore is purely about the graph, not the meta.
+    trig = json.loads(v.trigger_json or "{}")
+    wf.nodes_json = v.nodes_json
+    wf.edges_json = v.edges_json
+    wf.viewport_json = v.viewport_json or wf.viewport_json
+    if trig.get("type"):
+        wf.trigger_type = trig.get("type")
+        wf.trigger_doctype = trig.get("doctype") or ""
+        wf.trigger_event = trig.get("event") or ""
+        wf.cron = trig.get("cron") or ""
+    wf.save()
+    return {"restored": True, "workflow": wf.name}
+
+
+@frappe.whitelist()
+def annotate_version(version: str, message: str):
+    """Set/update the message field on a version. Lets users add a note
+    like 'before refactor' after the fact."""
+    _check_perm()
+    frappe.db.set_value("FlowAgent Workflow Version", version, "message", message)
+    return {"ok": True}
+
+
+# =================================================================
+# Bulk re-trigger
+# =================================================================
+@frappe.whitelist()
+def bulk_retrigger(workflow: str, doctype: str | None = None,
+                   from_date: str | None = None, to_date: str | None = None,
+                   filters_json: str | None = None,
+                   max_docs: int = 100, dry_run: int = 0):
+    """Run a workflow against a batch of historic documents.
+
+    Use case: you ship a new workflow that AI-classifies new Leads, and you
+    want to apply it retroactively to last month's leads. Without this,
+    you'd have to manually re-save each one or write a script.
+
+    Defaults to dry_run=1 (preview) so users see what would happen first.
+
+    Args:
+        workflow: The Workflow doc name to fire.
+        doctype: DocType to scan. Defaults to the workflow's trigger doctype.
+        from_date / to_date: Inclusive bounds on `creation`. Optional.
+        filters_json: Extra Frappe filter conditions as JSON.
+        max_docs: Hard cap to prevent runaway batches. Capped at 500.
+        dry_run: If 1, runs each workflow execution in dry-run mode too.
+
+    Returns:
+        {"queued": N, "preview": [first 10 doc names], "doctype": ..., "dry_run": ...}
+    """
+    _check_perm()
+    cap = min(500, int(max_docs or 100))
+    wf = frappe.get_doc("FlowAgent Workflow", workflow)
+    target_dt = doctype or wf.trigger_doctype
+    if not target_dt:
+        frappe.throw(
+            "Cannot bulk re-trigger: workflow has no doctype trigger and "
+            "no doctype was specified."
+        )
+
+    # Build filters. Date bounds compose cleanly:
+    #   from + to     →  "between" range
+    #   from only     →  ">="
+    #   to only       →  "<="
+    # Any user-supplied filters_json takes priority on other fields; only the
+    # "creation" key is overridden when a date range is also provided.
+    filters = {}
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except json.JSONDecodeError:
+            frappe.throw("filters_json must be valid JSON")
+    if from_date and to_date:
+        filters["creation"] = ["between", [from_date, to_date]]
+    elif from_date:
+        filters["creation"] = [">=", from_date]
+    elif to_date:
+        filters["creation"] = ["<=", to_date]
+
+    docs = frappe.get_all(target_dt, filters=filters, pluck="name", limit=cap, order_by="creation asc")
+
+    is_dry = bool(cint(dry_run))
+
+    # Enqueue each one
+    for dn in docs:
+        try:
+            doc = frappe.get_doc(target_dt, dn)
+            payload = {
+                "doc": doc.as_dict(no_default_fields=False),
+                "doc_name": dn,
+                "doctype": target_dt,
+                "event": "Bulk Retrigger",
+                "user": frappe.session.user,
+            }
+            frappe.enqueue(
+                "flowagent.engine.run_workflow_background",
+                queue="long",  # batch runs go to the long-running queue
+                timeout=600,
+                workflow_name=workflow,
+                trigger_source="bulk_retrigger",
+                payload=payload,
+                user=frappe.session.user,
+                dry_run=is_dry,
+            )
+        except Exception as e:
+            frappe.log_error(
+                title=f"FlowAgent bulk_retrigger: failed to enqueue {target_dt}/{dn}",
+                message=str(e),
+            )
+
+    return {
+        "queued": len(docs),
+        "preview": docs[:10],
+        "doctype": target_dt,
+        "dry_run": is_dry,
+        "cap": cap,
+    }
+
+
+@frappe.whitelist()
+def preview_retrigger_count(workflow: str, doctype: str | None = None,
+                            from_date: str | None = None, to_date: str | None = None,
+                            filters_json: str | None = None):
+    """Count how many docs would be re-triggered, without queuing anything.
+    Used by the Studio UI to show "this will run against N docs"."""
+    _check_perm()
+    wf = frappe.get_doc("FlowAgent Workflow", workflow)
+    target_dt = doctype or wf.trigger_doctype
+    if not target_dt:
+        return {"count": 0, "doctype": None}
+    filters = {}
+    if filters_json:
+        try:
+            filters = json.loads(filters_json)
+        except json.JSONDecodeError:
+            pass
+    if from_date and to_date:
+        filters["creation"] = ["between", [from_date, to_date]]
+    elif from_date:
+        filters["creation"] = [">=", from_date]
+    elif to_date:
+        filters["creation"] = ["<=", to_date]
+    count = frappe.db.count(target_dt, filters)
+    return {"count": count, "doctype": target_dt}

@@ -168,25 +168,53 @@
 
 .fa-trigger-pill {
     font-family: var(--fa-font-mono);
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 500;
-    padding: 5px 11px;
+    padding: 4px 9px 4px 22px;
     border-radius: 20px;
     border: 1px solid var(--fa-border);
     background: var(--fa-surface);
     color: var(--fa-text-dim);
     letter-spacing: -0.005em;
     white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    position: relative;
+    cursor: default;
+}
+/* Status dot via pseudo-element keeps text clean and gives it color */
+.fa-trigger-pill::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--fa-border-strong);
 }
 .fa-trigger-on {
     background: rgba(16, 185, 129, 0.1);
     color: #047857;
     border-color: rgba(16, 185, 129, 0.3);
 }
+.fa-trigger-on::before {
+    background: var(--fa-success);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+    animation: fa-trigger-pulse 2.4s ease-in-out infinite;
+}
 .fa-trigger-warn {
     background: rgba(245, 158, 11, 0.1);
     color: #B45309;
     border-color: rgba(245, 158, 11, 0.3);
+}
+.fa-trigger-warn::before { background: var(--fa-warn); }
+
+@keyframes fa-trigger-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18); }
+    50%      { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.32); }
 }
 
 .fa-spacer { flex: 1; }
@@ -201,6 +229,10 @@
     border-radius: 7px;
     border: 1px solid transparent;
     transition: all 0.12s;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 #fa-wf-name:hover {
     background: var(--fa-surface-2);
@@ -1383,4 +1415,612 @@ body:not(.flowagent-fullscreen) #fa-app {
     color: var(--fa-text-mute);
     font-weight: 500;
     margin-left: 2px;
+}
+
+/* =================================================================
+   Trace pane — step-by-step inspector with JSON variable trees
+   ================================================================= */
+.fa-trace-replay {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--fa-border);
+    background: var(--fa-surface);
+    color: var(--fa-text-dim);
+    font-family: var(--fa-font);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.12s;
+}
+.fa-trace-replay:hover {
+    background: var(--fa-accent-dim);
+    color: var(--fa-accent-hot);
+    border-color: var(--fa-accent);
+}
+.fa-trace-replay i { font-size: 13px; }
+
+.fa-trace-header {
+    padding: 10px 0 12px;
+    border-bottom: 1px solid var(--fa-border);
+    margin-bottom: 8px;
+}
+.fa-trace-run-name {
+    font-family: var(--fa-font-mono);
+    font-size: 11px;
+    color: var(--fa-text-mute);
+    margin-bottom: 6px;
+}
+.fa-trace-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.fa-trace-status-pill {
+    font-family: var(--fa-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.fa-trace-status-ok   { background: rgba(16,185,129,0.12); color: #047857; }
+.fa-trace-status-err  { background: rgba(239,68,68,0.12);  color: #B91C1C; }
+.fa-trace-status-warn { background: rgba(245,158,11,0.12); color: #B45309; }
+.fa-trace-meta-item {
+    font-family: var(--fa-font-mono);
+    font-size: 10.5px;
+    color: var(--fa-text-mute);
+}
+.fa-trace-trigger-info {
+    margin-top: 8px;
+    font-family: var(--fa-font-mono);
+    font-size: 10.5px;
+}
+.fa-trace-meta-label {
+    color: var(--fa-text-mute);
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.07em;
+    margin-right: 6px;
+}
+.fa-trace-meta-val { color: var(--fa-text-dim); }
+.fa-trace-error {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 6px;
+    color: #B91C1C;
+    font-family: var(--fa-font-mono);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+/* Steps */
+.fa-trace-step {
+    border: 1px solid var(--fa-border);
+    border-radius: 7px;
+    margin-bottom: 6px;
+    background: var(--fa-surface);
+    overflow: hidden;
+}
+.fa-trace-step-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.fa-trace-step-head:hover { background: var(--fa-surface-2); }
+.fa-trace-step-open .fa-trace-step-head { background: var(--fa-surface-2); }
+.fa-trace-step-open .fa-trace-step-chevron { transform: rotate(180deg); }
+.fa-trace-step-idx {
+    font-family: var(--fa-font-mono);
+    font-size: 10px;
+    color: var(--fa-text-mute);
+    background: var(--fa-surface-3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    min-width: 18px;
+    text-align: center;
+}
+.fa-trace-step-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--fa-border-strong);
+    flex-shrink: 0;
+}
+.fa-trace-step-dot-ok  { background: var(--fa-success); }
+.fa-trace-step-dot-err { background: var(--fa-danger); }
+.fa-trace-step-dot-warn{ background: var(--fa-warn); }
+.fa-trace-step-label {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fa-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fa-trace-step-label i { font-size: 12px; vertical-align: -1px; margin-right: 3px; }
+.fa-trace-step-ms {
+    font-family: var(--fa-font-mono);
+    font-size: 10px;
+    color: var(--fa-text-mute);
+}
+.fa-trace-step-chevron {
+    font-size: 14px;
+    color: var(--fa-text-mute);
+    transition: transform 0.15s;
+}
+.fa-trace-step-body {
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--fa-border);
+    background: var(--fa-bg);
+}
+.fa-trace-error-msg, .fa-trace-warn-msg {
+    padding: 7px 10px;
+    border-radius: 5px;
+    font-family: var(--fa-font-mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+}
+.fa-trace-error-msg {
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.18);
+    color: #B91C1C;
+}
+.fa-trace-warn-msg {
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.18);
+    color: #B45309;
+}
+.fa-trace-section-label {
+    font-family: var(--fa-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--fa-text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin: 8px 0 5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.fa-trace-section-label:first-child { margin-top: 0; }
+.fa-trace-hint {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fa-text-mute);
+    opacity: 0.7;
+}
+.fa-trace-tree {
+    background: var(--fa-surface);
+    border: 1px solid var(--fa-border);
+    border-radius: 5px;
+    padding: 8px;
+    font-family: var(--fa-font-mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--fa-text);
+    overflow-x: auto;
+}
+
+/* JSON tree nodes */
+.fa-tree-node { display: inline-block; }
+.fa-tree-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 1px 0;
+}
+.fa-tree-key {
+    color: var(--fa-accent-hot);
+    flex-shrink: 0;
+}
+.fa-tree-key::after { content: ':'; opacity: 0.5; margin-right: 1px; }
+.fa-tree-collapsible {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    user-select: none;
+}
+.fa-tree-toggle {
+    color: var(--fa-text-mute);
+    font-size: 9px;
+    width: 10px;
+}
+.fa-tree-meta {
+    color: var(--fa-text-mute);
+    font-size: 10.5px;
+}
+.fa-tree-children {
+    margin-left: 14px;
+    border-left: 1px dashed var(--fa-border);
+    padding-left: 8px;
+}
+.fa-tree-leaf {
+    cursor: copy;
+    border-radius: 3px;
+    padding: 0 3px;
+    transition: background 0.1s;
+}
+.fa-tree-leaf:hover {
+    background: var(--fa-accent-dim);
+}
+.fa-tree-str   { color: #057A55; }
+.fa-tree-num   { color: #C2410C; }
+.fa-tree-bool  { color: #6D28D9; }
+.fa-tree-null  { color: var(--fa-text-mute); font-style: italic; }
+.fa-tree-empty { color: var(--fa-text-mute); }
+.fa-tree-val   { color: var(--fa-text); }
+
+/* Dark theme colour swaps */
+[data-theme="dark"] .fa-tree-key  { color: var(--fa-accent); }
+[data-theme="dark"] .fa-tree-str  { color: #4ADE80; }
+[data-theme="dark"] .fa-tree-num  { color: #FB923C; }
+[data-theme="dark"] .fa-tree-bool { color: #C4B5FD; }
+[data-theme="dark"] .fa-trace-error-msg { color: #FCA5A5; }
+[data-theme="dark"] .fa-trace-warn-msg  { color: #FCD34D; }
+
+/* Render-warning badge on a node — shows when a template referenced
+   a missing variable or had a render error. */
+.fa-node-warn-badge {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--fa-warn);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    box-shadow: 0 2px 6px rgba(245, 158, 11, 0.4);
+    cursor: help;
+    z-index: 4;
+}
+.fa-node-warn-badge i { font-size: 11px; }
+
+/* Test mode toggle in the topbar */
+.fa-test-toggle {
+    border: 1px solid var(--fa-border);
+    background: var(--fa-surface);
+}
+.fa-test-toggle:hover {
+    background: rgba(245, 158, 11, 0.06);
+    border-color: var(--fa-warn);
+}
+body.fa-test-mode-active .fa-test-toggle {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: var(--fa-warn);
+    color: #B45309;
+}
+body.fa-test-mode-active .fa-tb-btn.fa-run {
+    background: var(--fa-warn);
+    border-color: var(--fa-warn);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15) inset, 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+body.fa-test-mode-active .fa-tb-btn.fa-run:hover {
+    background: #D97706;
+    border-color: #D97706;
+}
+
+/* Dry-run pill on trace step cards */
+.fa-trace-dry-pill {
+    font-family: var(--fa-font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.12);
+    color: #B45309;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+[data-theme="dark"] .fa-trace-dry-pill { color: #FCD34D; }
+
+/* Stats — sparkline + top errors */
+.fa-stats-section {
+    margin-top: 18px;
+}
+.fa-stats-section-label {
+    font-family: var(--fa-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--fa-text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 8px;
+}
+.fa-sparkline-wrap {
+    background: var(--fa-surface);
+    border: 1px solid var(--fa-border);
+    border-radius: 7px;
+    padding: 8px;
+}
+.fa-sparkline {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 60px;
+}
+.fa-spark-bar {
+    flex: 1;
+    min-width: 3px;
+    border-radius: 2px 2px 0 0;
+    transition: opacity 0.1s;
+}
+.fa-spark-bar:hover { opacity: 0.7; }
+.fa-spark-ok   { background: var(--fa-success); }
+.fa-spark-err  { background: var(--fa-danger); }
+.fa-spark-warn { background: var(--fa-warn); }
+
+.fa-top-err {
+    display: flex;
+    gap: 10px;
+    padding: 8px 10px;
+    background: rgba(239, 68, 68, 0.06);
+    border: 1px solid rgba(239, 68, 68, 0.18);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    align-items: flex-start;
+}
+.fa-top-err-count {
+    font-family: var(--fa-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: #B91C1C;
+    background: rgba(239, 68, 68, 0.15);
+    padding: 1px 7px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+.fa-top-err-msg {
+    font-family: var(--fa-font-mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--fa-text);
+    word-break: break-word;
+}
+[data-theme="dark"] .fa-top-err-count { color: #FCA5A5; }
+
+/* =================================================================
+   Topbar dropdown menus
+   ================================================================= */
+.fa-tb-menu {
+    position: relative;
+    display: inline-block;
+}
+.fa-tb-menu-chevron {
+    font-size: 13px !important;
+    margin-left: 2px;
+    opacity: 0.6;
+    transition: transform 0.15s;
+}
+.fa-tb-menu-btn-open .fa-tb-menu-chevron {
+    transform: rotate(180deg);
+    opacity: 1;
+}
+.fa-tb-menu-btn-open {
+    background: var(--fa-surface-2);
+    color: var(--fa-text);
+}
+
+.fa-tb-menu-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 240px;
+    background: var(--fa-surface);
+    border: 1px solid var(--fa-border);
+    border-radius: 9px;
+    box-shadow:
+        0 4px 12px rgba(0, 0, 0, 0.06),
+        0 12px 32px rgba(0, 0, 0, 0.1);
+    padding: 4px 0;
+    z-index: 100;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.fa-tb-menu-dropdown.fa-tb-menu-open {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.fa-tb-menu-section {
+    font-family: var(--fa-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    color: var(--fa-text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 8px 12px 4px;
+}
+.fa-tb-menu-divider {
+    height: 1px;
+    background: var(--fa-border);
+    margin: 4px 0;
+}
+.fa-tb-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--fa-text);
+    font-family: var(--fa-font);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.fa-tb-menu-item:hover {
+    background: var(--fa-surface-2);
+}
+.fa-tb-menu-item i {
+    font-size: 15px;
+    color: var(--fa-text-dim);
+    width: 16px;
+    flex-shrink: 0;
+}
+.fa-tb-menu-item span {
+    flex: 1;
+}
+.fa-tb-menu-kbd {
+    font-family: var(--fa-font-mono);
+    font-size: 10px;
+    color: var(--fa-text-mute);
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--fa-surface-2);
+    border: 1px solid var(--fa-border);
+    flex: 0 0 auto;
+}
+.fa-tb-menu-item-danger:hover {
+    background: rgba(239, 68, 68, 0.08);
+    color: var(--fa-danger);
+}
+.fa-tb-menu-item-danger:hover i {
+    color: var(--fa-danger);
+}
+
+/* Advanced section in node config — collapsible retry settings */
+.fa-cfg-advanced {
+    margin-top: 16px;
+    border-top: 1px solid var(--fa-border);
+    padding-top: 12px;
+}
+.fa-cfg-advanced-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--fa-font);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fa-text-mute);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    padding: 4px 0;
+    user-select: none;
+}
+.fa-cfg-advanced-head:hover { color: var(--fa-text-dim); }
+.fa-cfg-adv-chev {
+    font-size: 13px;
+    transition: transform 0.15s ease;
+}
+.fa-cfg-adv-hint {
+    margin-left: auto;
+    font-weight: 400;
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+    opacity: 0.7;
+}
+.fa-cfg-advanced-body {
+    margin-top: 8px;
+}
+
+/* =================================================================
+   n8n-style run animation — currently-running node pulse + flowing
+   edge dot. Only applied while the run is live; cleared on terminal.
+   ================================================================= */
+
+/* The actively-running node: soft glow that pulses to draw the eye */
+.fa-wf-node.fa-node-running {
+    box-shadow:
+        0 0 0 1.5px var(--fa-accent),
+        0 0 0 6px rgba(99, 102, 241, 0.15),
+        0 4px 16px rgba(99, 102, 241, 0.25);
+    animation: fa-node-pulse 1.4s ease-in-out infinite;
+    z-index: 3;
+}
+@keyframes fa-node-pulse {
+    0%, 100% {
+        box-shadow:
+            0 0 0 1.5px var(--fa-accent),
+            0 0 0 6px rgba(99, 102, 241, 0.15),
+            0 4px 16px rgba(99, 102, 241, 0.25);
+    }
+    50% {
+        box-shadow:
+            0 0 0 1.5px var(--fa-accent),
+            0 0 0 10px rgba(99, 102, 241, 0.08),
+            0 4px 22px rgba(99, 102, 241, 0.4);
+    }
+}
+
+/* Completed nodes get a steady success border so the user can trace the
+   path of execution at a glance */
+.fa-wf-node.fa-node-completed {
+    border-color: rgba(16, 185, 129, 0.55);
+}
+.fa-wf-node.fa-node-completed::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: inherit;
+    background: linear-gradient(135deg,
+        rgba(16, 185, 129, 0.04) 0%,
+        transparent 40%);
+    pointer-events: none;
+}
+.fa-wf-node.fa-node-failed {
+    border-color: rgba(239, 68, 68, 0.6);
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
+
+/* Edge between two completed nodes — solid colored line */
+.fa-edge-path.fa-edge-active {
+    stroke: var(--fa-success);
+    stroke-width: 2.2;
+    opacity: 0.85;
+}
+
+/* Edge currently carrying data — base is a dimmer line, overlay carries
+   the flowing dot. We brighten the base too so the path is visible. */
+.fa-edge-running-base {
+    stroke: var(--fa-accent);
+    stroke-width: 2.2;
+    opacity: 0.35;
+}
+.fa-edge-running-flow {
+    fill: none;
+    stroke: var(--fa-accent);
+    stroke-width: 2.4;
+    stroke-dasharray: 6 8;
+    stroke-linecap: round;
+    opacity: 0.85;
+    animation: fa-edge-flow 0.9s linear infinite;
+}
+@keyframes fa-edge-flow {
+    from { stroke-dashoffset: 0;   }
+    to   { stroke-dashoffset: -14; }
+}
+
+/* The bright dot riding along the path */
+.fa-edge-running-dot {
+    fill: var(--fa-accent);
+    filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.85));
 }

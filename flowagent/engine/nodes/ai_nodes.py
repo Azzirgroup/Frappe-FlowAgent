@@ -67,6 +67,58 @@ def _extract_text(response) -> str:
     return "".join(parts).strip()
 
 
+# Approximate per-million-token prices for the standard Anthropic models.
+# We store these client-side too so they update without a release, but
+# this is a safe fallback. Prices are in USD per million tokens.
+_MODEL_PRICES = {
+    # Claude Sonnet 4.x
+    "claude-sonnet-4":         {"in": 3.0,  "out": 15.0},
+    "claude-sonnet-4-5":       {"in": 3.0,  "out": 15.0},
+    "claude-sonnet-4-20250514": {"in": 3.0, "out": 15.0},
+    # Claude Opus 4.x
+    "claude-opus-4":           {"in": 15.0, "out": 75.0},
+    "claude-opus-4-5":         {"in": 15.0, "out": 75.0},
+    # Claude Haiku
+    "claude-haiku-4-5":        {"in": 1.0,  "out": 5.0},
+    "claude-haiku-3-5":        {"in": 0.8,  "out": 4.0},
+}
+
+
+def _record_usage(runner, model: str, response) -> None:
+    """Read input_tokens / output_tokens from an Anthropic response and
+    accumulate onto the runner. Best-effort — Anthropic libraries have
+    used slightly different shapes over time, so we try a few paths.
+    """
+    if not runner:
+        return
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return
+    in_tok = getattr(usage, "input_tokens", 0) or 0
+    out_tok = getattr(usage, "output_tokens", 0) or 0
+    # Initialise on first call
+    if not hasattr(runner, "_token_usage"):
+        runner._token_usage = {"input": 0, "output": 0, "cost_usd": 0.0, "calls": 0}
+    runner._token_usage["input"]  += in_tok
+    runner._token_usage["output"] += out_tok
+    runner._token_usage["calls"]  += 1
+    # Estimate cost using whatever prefix of the model name we match
+    # (Anthropic appends date suffixes that change over time).
+    price = None
+    if model in _MODEL_PRICES:
+        price = _MODEL_PRICES[model]
+    else:
+        for k, p in _MODEL_PRICES.items():
+            if model.startswith(k):
+                price = p
+                break
+    if price:
+        runner._token_usage["cost_usd"] += (
+            in_tok  * price["in"]  / 1_000_000 +
+            out_tok * price["out"] / 1_000_000
+        )
+
+
 def _strip_code_fences(s: str) -> str:
     s = s.strip()
     s = re.sub(r"^```(?:json)?\s*", "", s)
@@ -91,8 +143,9 @@ class LLMPromptNode(BaseExecutor):
 
     def run(self, *, node, cfg, context, runner):
         client = _client()
+        model = _model(cfg)
         kwargs = {
-            "model": _model(cfg),
+            "model": model,
             "max_tokens": int(cfg.get("max_tokens") or 1024),
             "messages": [{"role": "user", "content": cfg.get("prompt", "")}],
         }
@@ -100,6 +153,7 @@ class LLMPromptNode(BaseExecutor):
         if sys_prompt:
             kwargs["system"] = sys_prompt
         response = client.messages.create(**kwargs)
+        _record_usage(runner, model, response)
         text = _extract_text(response)
         return text
 
@@ -138,11 +192,13 @@ class ExtractNode(BaseExecutor):
             f"Source text:\n{source}\n\n"
             "JSON:"
         )
+        model = _model(cfg)
         response = client.messages.create(
-            model=_model(cfg),
+            model=model,
             max_tokens=int(cfg.get("max_tokens") or 1024),
             messages=[{"role": "user", "content": prompt}],
         )
+        _record_usage(runner, model, response)
         text = _strip_code_fences(_extract_text(response))
         try:
             return json.loads(text)
@@ -192,11 +248,13 @@ class ClassifyNode(BaseExecutor):
             "Reply with ONLY the chosen category label, nothing else."
         )
         client = _client()
+        model = _model(cfg)
         response = client.messages.create(
-            model=_model(cfg),
+            model=model,
             max_tokens=50,
             messages=[{"role": "user", "content": prompt}],
         )
+        _record_usage(runner, model, response)
         chosen = _extract_text(response).strip().strip(".\"'")
         # Sanity-check the response — if the model returned junk, fall back to closest match
         for c in cats:
@@ -222,8 +280,9 @@ class SentimentNode(BaseExecutor):
     def run(self, *, node, cfg, context, runner):
         text = cfg.get("text") or ""
         client = _client()
+        model = _model(cfg)
         response = client.messages.create(
-            model=_model(cfg),
+            model=model,
             max_tokens=80,
             messages=[{"role": "user", "content": (
                 "Classify the sentiment of the following text. Reply with a JSON "
@@ -231,6 +290,7 @@ class SentimentNode(BaseExecutor):
                 f"Text:\n{text}\n\nJSON:"
             )}],
         )
+        _record_usage(runner, model, response)
         raw = _strip_code_fences(_extract_text(response))
         try:
             parsed = json.loads(raw)
@@ -262,14 +322,16 @@ class VisionNode(BaseExecutor):
         image_block = self._build_image_block(file_url)
 
         client = _client()
+        model = _model(cfg)
         response = client.messages.create(
-            model=_model(cfg),
+            model=model,
             max_tokens=int(cfg.get("max_tokens") or 1500),
             messages=[{
                 "role": "user",
                 "content": [image_block, {"type": "text", "text": prompt}],
             }],
         )
+        _record_usage(runner, model, response)
         return _extract_text(response)
 
     def _build_image_block(self, file_url: str) -> dict:
@@ -351,13 +413,15 @@ class AgentNode(BaseExecutor):
         tool_log = []
 
         for iteration in range(max_iters):
+            agent_model = _model(cfg)
             response = client.messages.create(
-                model=_model(cfg),
+                model=agent_model,
                 max_tokens=int(cfg.get("max_tokens") or 1500),
                 system=system,
                 tools=tools,
                 messages=messages,
             )
+            _record_usage(runner, agent_model, response)
 
             # Collect text + tool calls from this turn
             messages.append({"role": "assistant", "content": response.content})

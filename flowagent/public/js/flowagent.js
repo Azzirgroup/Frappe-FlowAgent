@@ -655,7 +655,101 @@ let state = {
     spaceDown: false,
     // AI Build modal mode: 'create' or 'modify'
     aiMode: 'create',
+    // Dry-run mode: writes and integrations are simulated.
+    testMode: false,
+    // Undo / redo: stack of canvas snapshots. Each entry is the full
+    // serialized graph (nodes + edges + trigger). We cap the history
+    // depth so memory doesn't grow forever on long sessions.
+    history: [],
+    historyIndex: -1,
+    _historyTimer: null,
 };
+
+const HISTORY_MAX = 50;
+
+// ============================================================
+// Canvas undo / redo
+// ============================================================
+//
+// History is a stack of full graph snapshots. We push a snapshot
+// whenever the user changes the graph structure (add/remove node,
+// add/remove edge) or modifies a node's config. To avoid spamming
+// history with every keystroke on a textarea, config changes use a
+// debounce timer.
+//
+// historyIndex points to the CURRENT state. undo decrements, redo
+// increments. After any new edit, we truncate everything past the
+// current index — that's the standard "linear history" behavior.
+
+function snapshotState(immediate) {
+    // Coalesce rapid edits into a single history entry. Most config-field
+    // changes fire on every keystroke, so we wait 350ms before pushing.
+    if (state._historyTimer) {
+        clearTimeout(state._historyTimer);
+        state._historyTimer = null;
+    }
+    const doSnap = () => {
+        const snap = {
+            nodes: state.nodes.map(n => ({
+                id: n.id, type: n.type, x: n.x, y: n.y,
+                cfg: JSON.parse(JSON.stringify(n.cfg || {})),
+            })),
+            edges: state.edges.map(e => ({
+                from: e.from, to: e.to, fromPort: e.fromPort,
+            })),
+            trigger: JSON.parse(JSON.stringify(state.trigger || {})),
+        };
+        // Drop redo branch
+        state.history.length = state.historyIndex + 1;
+        state.history.push(snap);
+        // Cap history depth
+        if (state.history.length > HISTORY_MAX) {
+            state.history.shift();
+        }
+        state.historyIndex = state.history.length - 1;
+    };
+    if (immediate) {
+        doSnap();
+    } else {
+        state._historyTimer = setTimeout(doSnap, 350);
+    }
+}
+
+function undo() {
+    if (state.historyIndex <= 0) {
+        frappe.show_alert({ message: 'Nothing to undo', indicator: 'gray' }, 2);
+        return;
+    }
+    state.historyIndex--;
+    _restoreSnapshot(state.history[state.historyIndex]);
+}
+
+function redo() {
+    if (state.historyIndex >= state.history.length - 1) {
+        frappe.show_alert({ message: 'Nothing to redo', indicator: 'gray' }, 2);
+        return;
+    }
+    state.historyIndex++;
+    _restoreSnapshot(state.history[state.historyIndex]);
+}
+
+function _restoreSnapshot(snap) {
+    if (!snap) return;
+    // Rebuild state.nodes from the snapshot, re-resolving NODE_DEFS so each
+    // node object has its full def reference. We keep node IDs stable so
+    // existing edges remain valid.
+    state.nodes = snap.nodes.map(n => ({
+        id: n.id, type: n.type, x: n.x, y: n.y,
+        cfg: JSON.parse(JSON.stringify(n.cfg || {})),
+        def: NODE_DEFS[n.type],
+    }));
+    state.edges = snap.edges.map(e => ({ from: e.from, to: e.to, fromPort: e.fromPort }));
+    state.trigger = JSON.parse(JSON.stringify(snap.trigger || {}));
+    state.selectedNodeId = null;
+    renderAll();
+    document.getElementById('fa-config-body').innerHTML =
+        '<p class="fa-muted">Select a node to configure it</p>';
+}
 
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.5;
@@ -692,14 +786,60 @@ window.flowagent_studio_html = function () {
             <span class="fa-brand-tag">studio</span>
         </div>
         <div class="fa-tb-sep"></div>
-        <button class="fa-tb-btn" data-action="open">
-            <i class="ti ti-folder-open"></i> Open</button>
-        <button class="fa-tb-btn" data-action="new">
-            <i class="ti ti-plus"></i> New</button>
-        <button class="fa-tb-btn" data-action="templates">
-            <i class="ti ti-template"></i> Templates</button>
-        <button class="fa-tb-btn fa-tb-icon-only" data-action="clear" title="Clear canvas">
-            <i class="ti ti-trash"></i></button>
+
+        <!-- Options menu — every non-canvas workflow action lives here -->
+        <div class="fa-tb-menu" data-menu="options">
+            <button class="fa-tb-btn fa-tb-menu-btn" data-action="toggle-menu" data-menu-target="options">
+                <i class="ti ti-menu-2"></i> Options
+                <i class="ti ti-chevron-down fa-tb-menu-chevron"></i>
+            </button>
+            <div class="fa-tb-menu-dropdown" id="fa-menu-options">
+                <div class="fa-tb-menu-section">File</div>
+                <button class="fa-tb-menu-item" data-action="open">
+                    <i class="ti ti-folder-open"></i><span>Open workflow…</span>
+                    <span class="fa-tb-menu-kbd">⌘O</span>
+                </button>
+                <button class="fa-tb-menu-item" data-action="new">
+                    <i class="ti ti-plus"></i><span>New workflow</span>
+                </button>
+                <div class="fa-tb-menu-divider"></div>
+                <div class="fa-tb-menu-section">Templates</div>
+                <button class="fa-tb-menu-item" data-action="templates">
+                    <i class="ti ti-template"></i><span>Browse templates…</span>
+                </button>
+                <button class="fa-tb-menu-item" data-action="save-as-template">
+                    <i class="ti ti-bookmark-plus"></i><span>Save as template</span>
+                </button>
+                <button class="fa-tb-menu-item" data-action="import-template">
+                    <i class="ti ti-upload"></i><span>Import template…</span>
+                </button>
+                <div class="fa-tb-menu-divider"></div>
+                <div class="fa-tb-menu-section">History</div>
+                <button class="fa-tb-menu-item" data-action="versions">
+                    <i class="ti ti-history"></i><span>Versions…</span>
+                </button>
+                <div class="fa-tb-menu-divider"></div>
+                <div class="fa-tb-menu-section">Tools</div>
+                <button class="fa-tb-menu-item" data-action="bulk-retrigger">
+                    <i class="ti ti-repeat"></i><span>Bulk re-run…</span>
+                </button>
+                <button class="fa-tb-menu-item" data-action="diagnose">
+                    <i class="ti ti-stethoscope"></i><span>Diagnose triggers</span>
+                </button>
+                <div class="fa-tb-menu-divider"></div>
+                <button class="fa-tb-menu-item fa-tb-menu-item-danger" data-action="clear">
+                    <i class="ti ti-trash"></i><span>Clear canvas</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="fa-tb-sep"></div>
+
+        <button class="fa-tb-btn fa-tb-icon-only" data-action="undo" title="Undo (Ctrl/⌘ + Z)">
+            <i class="ti ti-arrow-back-up"></i></button>
+        <button class="fa-tb-btn fa-tb-icon-only" data-action="redo" title="Redo (Ctrl/⌘ + Shift + Z)">
+            <i class="ti ti-arrow-forward-up"></i></button>
+
         <div class="fa-tb-sep"></div>
         <label class="fa-tb-toggle">
             <input type="checkbox" id="fa-enabled-toggle">
@@ -708,10 +848,12 @@ window.flowagent_studio_html = function () {
         <span id="fa-trigger-indicator" class="fa-trigger-pill" title="Trigger status"></span>
         <div class="fa-spacer"></div>
         <span id="fa-wf-name" title="Click to rename">Untitled workflow</span>
-        <button class="fa-tb-btn fa-tb-icon-only" data-action="diagnose" title="Diagnose trigger issues">
-            <i class="ti ti-stethoscope"></i></button>
         <button class="fa-tb-btn" data-action="save">
             <i class="ti ti-device-floppy"></i> Save</button>
+        <label class="fa-tb-toggle fa-test-toggle" title="Dry-run mode — preview the flow without writing data or hitting external services">
+            <input type="checkbox" id="fa-test-mode-toggle">
+            <span>Test mode</span>
+        </label>
         <button class="fa-tb-btn fa-run" data-action="run">
             <i class="ti ti-player-play"></i> Run</button>
       </div>
@@ -826,6 +968,7 @@ window.flowagent_studio_html = function () {
             <div class="fa-tabs">
                 <div class="fa-tab fa-tab-active" data-tab="config">Config</div>
                 <div class="fa-tab" data-tab="ai">AI Build</div>
+                <div class="fa-tab" data-tab="trace">Trace</div>
                 <div class="fa-tab" data-tab="runs">Runs</div>
                 <div class="fa-tab" data-tab="stats">Stats</div>
             </div>
@@ -852,6 +995,20 @@ window.flowagent_studio_html = function () {
                 </div>
             </div>
 
+            <div class="fa-panel-pane" id="fa-pane-trace" style="display:none">
+                <div class="fa-panel-header">
+                    <i class="ti ti-zoom-scan"></i> Run trace
+                    <span class="fa-spacer"></span>
+                    <button class="fa-trace-replay" id="fa-trace-replay" data-action="replay-run"
+                            title="Run again with the same payload" style="display:none">
+                        <i class="ti ti-refresh"></i> Replay
+                    </button>
+                </div>
+                <div class="fa-panel-body" id="fa-trace-body">
+                    <p class="fa-muted">Run the workflow or pick a previous run to inspect it here</p>
+                </div>
+            </div>
+
             <div class="fa-panel-pane" id="fa-pane-runs" style="display:none">
                 <div class="fa-panel-header"><i class="ti ti-list-details"></i> Recent runs</div>
                 <div class="fa-panel-body" id="fa-runs-body">
@@ -867,6 +1024,30 @@ window.flowagent_studio_html = function () {
                         <div class="fa-stat"><div class="fa-sv" id="fa-stat-ok" style="color:var(--fa-success)">0</div><div class="fa-sl">success</div></div>
                         <div class="fa-stat"><div class="fa-sv" id="fa-stat-err" style="color:var(--fa-danger)">0</div><div class="fa-sl">errors</div></div>
                         <div class="fa-stat"><div class="fa-sv" id="fa-stat-ms">—</div><div class="fa-sl">avg ms</div></div>
+                    </div>
+
+                    <div class="fa-stats-section">
+                        <div class="fa-stats-section-label">Last 50 runs</div>
+                        <div class="fa-sparkline-wrap" id="fa-sparkline-wrap">
+                            <p class="fa-muted" style="padding:14px 0">No runs yet</p>
+                        </div>
+                    </div>
+
+                    <div class="fa-stats-section" id="fa-ai-usage-section" style="display:none">
+                        <div class="fa-stats-section-label">AI usage (cumulative)</div>
+                        <div class="fa-stats-grid">
+                            <div class="fa-stat"><div class="fa-sv" id="fa-stat-ai-calls">0</div><div class="fa-sl">AI calls</div></div>
+                            <div class="fa-stat"><div class="fa-sv" id="fa-stat-ai-tokens">0</div><div class="fa-sl">tokens</div></div>
+                            <div class="fa-stat" style="grid-column: span 2">
+                                <div class="fa-sv" id="fa-stat-ai-cost" style="color:var(--fa-accent-hot)">$0</div>
+                                <div class="fa-sl">estimated cost (USD)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="fa-stats-section" id="fa-top-errors-section" style="display:none">
+                        <div class="fa-stats-section-label">Top errors</div>
+                        <div id="fa-top-errors"></div>
                     </div>
                 </div>
             </div>
@@ -913,18 +1094,37 @@ window.flowagent_studio_teardown = function () {
         document.removeEventListener('keyup', state._keyupHandler);
         state._keyupHandler = null;
     }
+    if (state._runPollTimer) {
+        clearTimeout(state._runPollTimer);
+        state._runPollTimer = null;
+    }
+    if (state._runPollVisHandler) {
+        document.removeEventListener('visibilitychange', state._runPollVisHandler);
+        state._runPollVisHandler = null;
+    }
 };
 
 function bindEvents() {
     const root = document.getElementById('fa-app');
     if (!root) return;
 
-    // Toolbar buttons
+    // Toolbar buttons. Auto-close any open dropdown menu when a menu-item
+    // is clicked — except the toggle itself.
     root.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', e => {
             e.preventDefault();
-            handleAction(btn.dataset.action);
+            const action = btn.dataset.action;
+            if (action !== 'toggle-menu' && btn.classList.contains('fa-tb-menu-item')) {
+                closeAllMenus();
+            }
+            handleAction(action, e);
         });
+    });
+
+    // Close dropdowns when clicking outside of them
+    document.addEventListener('click', e => {
+        if (e.target.closest && e.target.closest('.fa-tb-menu')) return;
+        closeAllMenus();
     });
 
     // Tab switching
@@ -985,12 +1185,33 @@ function bindEvents() {
             wrap.classList.add('fa-space-down');
             e.preventDefault();
         }
+        // Cmd/Ctrl-based shortcuts. Undo/redo work even when focused inside
+        // a text input — that matches what users expect from any editor.
+        if (e.ctrlKey || e.metaKey) {
+            // Undo / redo (allowed even when typing — flushes pending edits first)
+            if (e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                if (state._historyTimer) {
+                    clearTimeout(state._historyTimer);
+                    state._historyTimer = null;
+                    snapshotState(true);  // flush pending
+                }
+                undo();
+                return;
+            }
+            if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
+                e.preventDefault();
+                redo();
+                return;
+            }
+        }
         // Keyboard zoom shortcuts (when not typing)
         if (!isTypingTarget(e.target) && (e.ctrlKey || e.metaKey)) {
             if (e.key === '=' || e.key === '+') { e.preventDefault(); setZoom(state.zoom + ZOOM_STEP); }
             if (e.key === '-')                  { e.preventDefault(); setZoom(state.zoom - ZOOM_STEP); }
             if (e.key === '0')                  { e.preventDefault(); resetView(); }
             if (e.key === 'k')                  { e.preventDefault(); openAIBuildModal(); }
+            if (e.key === 'o' && !isTypingTarget(e.target)) { e.preventDefault(); openDialog(); }
         }
         if (!isTypingTarget(e.target) && e.key === 'f') {
             e.preventDefault();
@@ -1063,6 +1284,18 @@ function bindEvents() {
     document.getElementById('fa-enabled-toggle').addEventListener('change', e => {
         state.enabled = e.target.checked;
         refreshTriggerIndicator();
+    });
+
+    // Test mode toggle — flips dry_run on the next Run
+    document.getElementById('fa-test-mode-toggle').addEventListener('change', e => {
+        state.testMode = e.target.checked;
+        document.body.classList.toggle('fa-test-mode-active', state.testMode);
+        const runBtn = document.querySelector('[data-action="run"]');
+        if (runBtn) {
+            runBtn.innerHTML = state.testMode
+                ? '<i class="ti ti-flask"></i> Test run'
+                : '<i class="ti ti-player-play"></i> Run';
+        }
     });
 
     // AI sample prompts
@@ -1263,7 +1496,37 @@ function renderMinimap() {
         `<rect class="fa-minimap-viewport" x="${vx}" y="${vy}" width="${vw}" height="${vh}" rx="4"/>`;
 }
 
-function handleAction(name) {
+// ============================================================
+// Topbar dropdown menus
+// ============================================================
+// We render at most one open dropdown at a time. The button that toggled it
+// is the one before its sibling .fa-tb-menu-dropdown.
+
+function toggleMenu(e) {
+    const btn = e && e.currentTarget;
+    if (!btn) return;
+    const target = btn.dataset.menuTarget;
+    if (!target) return;
+    const dropdown = document.getElementById('fa-menu-' + target);
+    if (!dropdown) return;
+    const wasOpen = dropdown.classList.contains('fa-tb-menu-open');
+    closeAllMenus();
+    if (!wasOpen) {
+        dropdown.classList.add('fa-tb-menu-open');
+        btn.classList.add('fa-tb-menu-btn-open');
+    }
+}
+
+function closeAllMenus() {
+    document.querySelectorAll('.fa-tb-menu-dropdown.fa-tb-menu-open').forEach(d => {
+        d.classList.remove('fa-tb-menu-open');
+    });
+    document.querySelectorAll('.fa-tb-menu-btn-open').forEach(b => {
+        b.classList.remove('fa-tb-menu-btn-open');
+    });
+}
+
+function handleAction(name, e) {
     switch (name) {
         case 'open':            return openDialog();
         case 'new':             return newWorkflow();
@@ -1281,7 +1544,290 @@ function handleAction(name) {
         case 'ai-modal':        return openAIBuildModal();
         case 'ai-modal-close':  return closeAIBuildModal();
         case 'ai-modal-build':  return aiModalBuild();
+        case 'replay-run':      return replayLastRun();
+        case 'versions':        return openVersionsDialog();
+        case 'undo':              return undo();
+        case 'redo':              return redo();
+        case 'bulk-retrigger':    return openBulkRetriggerDialog();
+        case 'toggle-menu':       return toggleMenu(e);
+        case 'save-as-template':  return saveAsTemplate();
+        case 'import-template':   return importTemplateFromFile();
     }
+}
+
+// ============================================================
+// Bulk re-trigger — run the workflow against historic docs
+// ============================================================
+function openBulkRetriggerDialog() {
+    if (!state.currentWorkflow) {
+        frappe.show_alert({ message: 'Save the workflow first', indicator: 'orange' }, 3);
+        return;
+    }
+    const triggerDt = (state.trigger && state.trigger.doctype) || '';
+    const d = new frappe.ui.Dialog({
+        title: '<i class="ti ti-repeat"></i>&nbsp; Bulk re-trigger workflow',
+        size: 'large',
+        fields: [
+            {
+                fieldtype: 'HTML', fieldname: 'intro',
+                options: `<div style="padding: 0 0 12px; font-size: 12.5px; opacity: 0.85; line-height: 1.55">
+                    Run this workflow against existing documents. Useful when you've added a
+                    new workflow and want to apply it retroactively. Defaults to <b>dry run</b>
+                    — toggle it off to actually mutate data.
+                </div>`,
+            },
+            {
+                fieldname: 'doctype', label: 'DocType', fieldtype: 'Link',
+                options: 'DocType', reqd: 1, default: triggerDt,
+                description: triggerDt ? `Defaults to this workflow's trigger doctype.` : '',
+            },
+            { fieldtype: 'Column Break' },
+            {
+                fieldname: 'max_docs', label: 'Max documents', fieldtype: 'Int',
+                default: 100, description: 'Hard cap (max 500).',
+            },
+            { fieldtype: 'Section Break', label: 'Date range (optional)' },
+            { fieldname: 'from_date', label: 'From (creation ≥)', fieldtype: 'Date' },
+            { fieldtype: 'Column Break' },
+            { fieldname: 'to_date',   label: 'To (creation ≤)',   fieldtype: 'Date' },
+            { fieldtype: 'Section Break', label: 'Extra filters (optional)' },
+            {
+                fieldname: 'filters_json', label: 'Filters JSON', fieldtype: 'Code',
+                options: 'JSON',
+                description: 'Frappe filter dict, e.g. {"status": "Open"}. Combines with date range.',
+            },
+            { fieldtype: 'Section Break' },
+            {
+                fieldname: 'dry_run', label: 'Dry run (preview only — no writes)',
+                fieldtype: 'Check', default: 1,
+            },
+            { fieldtype: 'Section Break' },
+            { fieldtype: 'HTML', fieldname: 'preview',
+              options: '<div id="fa-bulk-preview" style="font-size: 12.5px; opacity: 0.8"></div>' },
+        ],
+        primary_action_label: 'Queue runs',
+        primary_action: vals => {
+            if (!vals.doctype) {
+                frappe.show_alert({ message: 'DocType required', indicator: 'orange' }, 3);
+                return;
+            }
+            const confirmMsg = vals.dry_run
+                ? `Queue ${vals.max_docs || 100} dry runs against ${vals.doctype}?`
+                : `⚠️ Queue REAL workflow runs (with writes) against up to ${vals.max_docs || 100} ${vals.doctype} records?`;
+            frappe.confirm(confirmMsg, () => {
+                frappe.call({
+                    method: 'flowagent.api.studio.bulk_retrigger',
+                    args: {
+                        workflow: state.currentWorkflow,
+                        doctype: vals.doctype,
+                        from_date: vals.from_date || null,
+                        to_date: vals.to_date || null,
+                        filters_json: vals.filters_json || null,
+                        max_docs: vals.max_docs || 100,
+                        dry_run: vals.dry_run ? 1 : 0,
+                    },
+                    callback: r => {
+                        const res = r.message || {};
+                        d.hide();
+                        frappe.show_alert({
+                            message: `✓ Queued ${res.queued} run${res.queued === 1 ? '' : 's'}${res.dry_run ? ' (dry)' : ''}`,
+                            indicator: 'green',
+                        }, 6);
+                        addLog(`Bulk re-trigger queued ${res.queued} runs${res.dry_run ? ' (dry)' : ''}`, 'info');
+                        // Refresh runs panel after a short delay so they appear
+                        setTimeout(refreshRuns, 1500);
+                    },
+                });
+            });
+        },
+    });
+    d.show();
+
+    // Live preview the count as the user adjusts filters
+    function refreshPreview() {
+        const vals = d.get_values(true);
+        if (!vals || !vals.doctype) return;
+        frappe.call({
+            method: 'flowagent.api.studio.preview_retrigger_count',
+            args: {
+                workflow: state.currentWorkflow,
+                doctype: vals.doctype,
+                from_date: vals.from_date || null,
+                to_date: vals.to_date || null,
+                filters_json: vals.filters_json || null,
+            },
+            callback: r => {
+                const c = r.message || {};
+                const el = document.getElementById('fa-bulk-preview');
+                if (!el) return;
+                const cap = vals.max_docs || 100;
+                el.innerHTML = c.count > 0
+                    ? `<b>${c.count}</b> matching ${frappe.utils.escape_html(c.doctype)} record${c.count === 1 ? '' : 's'} found.
+                       ${c.count > cap ? `<span style="color:#B45309"> First ${cap} will be processed.</span>` : ''}`
+                    : `<span style="color:#71717A">No records match the current filters.</span>`;
+            },
+        });
+    }
+    setTimeout(() => {
+        ['doctype', 'from_date', 'to_date', 'filters_json'].forEach(f => {
+            const ctrl = d.get_field(f);
+            if (ctrl && ctrl.$wrapper) {
+                ctrl.$wrapper.on('change', refreshPreview);
+            }
+        });
+        refreshPreview();
+    }, 100);
+}
+
+// ============================================================
+// Versions — list, restore, annotate
+// ============================================================
+function openVersionsDialog() {
+    if (!state.currentWorkflow) {
+        frappe.show_alert({ message: 'Save the workflow first', indicator: 'orange' }, 3);
+        return;
+    }
+    frappe.call({
+        method: 'flowagent.api.studio.list_versions',
+        args: { workflow: state.currentWorkflow },
+        callback: r => {
+            const versions = r.message || [];
+            const html = versions.length ? versions.map(v => `
+                <div class="fa-ver-row" data-ver="${v.name}">
+                    <div class="fa-ver-main">
+                        <div class="fa-ver-label">${frappe.utils.escape_html(v.version_label || v.name)}</div>
+                        <div class="fa-ver-meta">
+                            ${v.node_count} nodes ·
+                            by ${frappe.utils.escape_html(v.created_by_user || '?')} ·
+                            ${frappe.datetime.comment_when(v.creation)}
+                        </div>
+                        ${v.message ? `<div class="fa-ver-msg">${frappe.utils.escape_html(v.message)}</div>` : ''}
+                    </div>
+                    <div class="fa-ver-actions">
+                        <button class="fa-ver-btn" data-act="annotate" data-ver="${v.name}"
+                                title="Add or edit a note for this version"><i class="ti ti-pencil"></i></button>
+                        <button class="fa-ver-btn fa-ver-btn-primary" data-act="restore" data-ver="${v.name}">Restore</button>
+                    </div>
+                </div>
+            `).join('') : '<p class="text-muted">No versions yet. Save the workflow to start its history.</p>';
+
+            const d = new frappe.ui.Dialog({
+                title: '<i class="ti ti-history"></i>&nbsp; Workflow versions',
+                size: 'large',
+                fields: [{
+                    fieldtype: 'HTML',
+                    options: `
+                        <style>
+                        .fa-ver-row {
+                            display: flex; gap: 12px; padding: 12px;
+                            border: 1px solid var(--border-color, #e5e7eb);
+                            border-radius: 8px; margin-bottom: 8px;
+                            align-items: flex-start;
+                        }
+                        .fa-ver-row:hover { background: var(--bg-light-gray, #f9fafb); }
+                        .fa-ver-main { flex: 1; }
+                        .fa-ver-label {
+                            font-family: 'Geist Mono', ui-monospace, monospace;
+                            font-size: 13px; font-weight: 600;
+                            margin-bottom: 3px;
+                        }
+                        .fa-ver-meta { font-size: 11.5px; opacity: 0.7; }
+                        .fa-ver-msg {
+                            font-size: 12px; margin-top: 6px;
+                            padding: 5px 9px; background: rgba(99,102,241,0.06);
+                            border-left: 2px solid #6366F1;
+                            border-radius: 3px;
+                        }
+                        .fa-ver-actions { display: flex; gap: 6px; }
+                        .fa-ver-btn {
+                            padding: 5px 10px; border-radius: 5px;
+                            border: 1px solid var(--border-color, #d4d4d8);
+                            background: white; font-size: 12px;
+                            cursor: pointer;
+                        }
+                        .fa-ver-btn:hover { background: #f4f4f5; }
+                        .fa-ver-btn-primary {
+                            background: #6366F1; color: white; border-color: #6366F1;
+                            font-weight: 500;
+                        }
+                        .fa-ver-btn-primary:hover { background: #4F46E5; border-color: #4F46E5; }
+                        </style>
+                        ${html}
+                    `,
+                }],
+            });
+            d.show();
+            setTimeout(() => {
+                d.$wrapper.find('[data-act="restore"]').on('click', function () {
+                    const ver = this.dataset.ver;
+                    frappe.confirm(
+                        'Restore this version? Your current state will also be saved as a new version first, so this is reversible.',
+                        () => restoreVersion(ver, d),
+                    );
+                });
+                d.$wrapper.find('[data-act="annotate"]').on('click', function () {
+                    const ver = this.dataset.ver;
+                    const current = '';  // we don't have it on the row; user will type
+                    frappe.prompt(
+                        [{ fieldname: 'msg', label: 'Message', fieldtype: 'Data', reqd: 1 }],
+                        vals => {
+                            frappe.call({
+                                method: 'flowagent.api.studio.annotate_version',
+                                args: { version: ver, message: vals.msg },
+                                callback: () => {
+                                    frappe.show_alert({ message: 'Note saved', indicator: 'green' }, 2);
+                                    d.hide();
+                                    openVersionsDialog();  // reopen to refresh
+                                },
+                            });
+                        },
+                        'Annotate version', 'Save',
+                    );
+                });
+            }, 50);
+        },
+    });
+}
+
+function restoreVersion(versionName, dialog) {
+    frappe.call({
+        method: 'flowagent.api.studio.restore_version',
+        args: { version: versionName },
+        callback: r => {
+            if (r.message && r.message.restored) {
+                frappe.show_alert({ message: 'Version restored — reloading…', indicator: 'green' }, 3);
+                if (dialog) dialog.hide();
+                // Reload the workflow into the canvas so the user sees the restored state
+                loadWorkflow(r.message.workflow);
+            }
+        },
+    });
+}
+
+// Replay the most recently inspected run with its original payload.
+// Lets users iterate on a workflow without picking the same record
+// every time.
+function replayLastRun() {
+    if (!state.lastRun) {
+        frappe.show_alert({ message: 'No run to replay', indicator: 'orange' }, 3);
+        return;
+    }
+    // Use the stored payload from the last manual run if we have it; otherwise
+    // reconstruct from the run's trigger_payload (server returns it on get_run).
+    let payload = state.lastPayload;
+    if (!payload) {
+        // The trigger_payload from get_run contains the full hydrated context.
+        // Strip down to {doctype, name} so run_workflow_now re-hydrates fresh
+        // (in case the doc was updated since the original run).
+        const tp = state.lastRun.trigger_payload || {};
+        if (tp.doctype && tp.doc_name) {
+            payload = { doctype: tp.doctype, name: tp.doc_name };
+        } else {
+            payload = tp;
+        }
+    }
+    addLog(`Replaying ${state.lastRun.name}…`, 'info');
+    executeRun(payload);
 }
 
 function openAIBuildModal() {
@@ -1507,11 +2053,14 @@ function newWorkflow() {
     state.nodes = [];
     state.edges = [];
     state.nodeCounter = 0;
+    state.history = [];
+    state.historyIndex = -1;
     document.getElementById('fa-wf-name').textContent = n;
     document.getElementById('fa-enabled-toggle').checked = false;
     renderAll();
     renderConfigPanel();
     document.getElementById('fa-empty').style.display = '';
+    snapshotState(true);  // initial blank state
     addLog('New workflow', 'info');
 }
 
@@ -1541,6 +2090,10 @@ function loadWorkflow(name) {
             renderConfigPanel();
             refreshRuns();
             refreshStats();
+            // Reset history so undo doesn't try to revert across workflows
+            state.history = [];
+            state.historyIndex = -1;
+            snapshotState(true);
             addLog(`Loaded "${state.workflowName}"`, 'info');
         },
     });
@@ -1658,6 +2211,7 @@ function clearCanvas(askConfirm) {
     renderAll();
     renderConfigPanel();
     document.getElementById('fa-empty').style.display = '';
+    snapshotState(true);  // so Ctrl+Z can recover an accidental clear
 }
 
 // ============================================================
@@ -1696,6 +2250,7 @@ function addNode(type, x, y, overrides = {}) {
     renderNode(n);
     renderEdges();
     if (type.startsWith('trigger_')) refreshTriggerIndicator();
+    snapshotState(true);
     return id;
 }
 
@@ -1892,6 +2447,7 @@ function startWireDrag(fromNodeId, fromPort, mdEvent) {
         );
         state.edges.push({ from: fromNodeId, to: toNodeId, fromPort });
         renderEdges();
+        snapshotState(true);
         addLog(`Wired ${fromNodeId}/${fromPort} → ${toNodeId}`, 'info');
     }
 
@@ -1934,11 +2490,36 @@ function renderEdges() {
         const tp = portXY(to, 'in');
         const dx = (tp.x - fp.x) / 2;
         const d = `M${fp.x},${fp.y} C${fp.x + dx},${fp.y} ${tp.x - dx},${tp.y} ${tp.x},${tp.y}`;
+
+        // Base path — always rendered. Gets the .fa-edge-active class for
+        // edges between completed nodes (steady highlight).
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', d);
         path.setAttribute('class', 'fa-edge-path');
         if (e.runHighlight) path.classList.add('fa-edge-active');
+        if (e.runActive)    path.classList.add('fa-edge-running-base');
         svg.appendChild(path);
+
+        // Animated overlay — only on edges feeding into the next-to-fire
+        // node. Two parts: a flowing dashed line, and a small bright dot
+        // travelling along the path.
+        if (e.runActive) {
+            const flow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            flow.setAttribute('d', d);
+            flow.setAttribute('class', 'fa-edge-running-flow');
+            svg.appendChild(flow);
+
+            const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            dot.setAttribute('r', '4');
+            dot.setAttribute('class', 'fa-edge-running-dot');
+            const motion = document.createElementNS('http://www.w3.org/2000/svg', 'animateMotion');
+            motion.setAttribute('dur', '1.2s');
+            motion.setAttribute('repeatCount', 'indefinite');
+            motion.setAttribute('path', d);
+            motion.setAttribute('rotate', 'auto');
+            dot.appendChild(motion);
+            svg.appendChild(dot);
+        }
     });
 }
 
@@ -1977,7 +2558,49 @@ function renderConfigPanel() {
     def.fields.forEach(f => {
         html += renderField(n.id, f, n.cfg[f.k]);
     });
+
+    // Advanced section — applies to every node type. Collapsible because
+    // most workflows won't need to touch retry settings.
+    const retryAttempts = n.cfg.retry_attempts || '';
+    const retryDelay = n.cfg.retry_delay_ms || '';
+    html += `
+        <div class="fa-cfg-advanced">
+            <div class="fa-cfg-advanced-head" data-fa-advanced-toggle>
+                <i class="ti ti-chevron-right fa-cfg-adv-chev"></i>
+                <span>Advanced</span>
+                <span class="fa-cfg-adv-hint">retry on failure</span>
+            </div>
+            <div class="fa-cfg-advanced-body" style="display:none">
+                <div class="fa-field">
+                    <label>Retry attempts on failure</label>
+                    <input type="number" min="0" max="10"
+                           data-cfg-key="retry_attempts"
+                           value="${frappe.utils.escape_html(String(retryAttempts))}"
+                           placeholder="0">
+                </div>
+                <div class="fa-field">
+                    <label>Retry delay (ms)</label>
+                    <input type="number" min="0" step="100"
+                           data-cfg-key="retry_delay_ms"
+                           value="${frappe.utils.escape_html(String(retryDelay))}"
+                           placeholder="exponential backoff if blank">
+                </div>
+            </div>
+        </div>
+    `;
     body.innerHTML = html;
+
+    // Advanced section toggle
+    const advHead = body.querySelector('[data-fa-advanced-toggle]');
+    if (advHead) {
+        advHead.addEventListener('click', () => {
+            const advBody = body.querySelector('.fa-cfg-advanced-body');
+            const chev = body.querySelector('.fa-cfg-adv-chev');
+            const isOpen = advBody.style.display !== 'none';
+            advBody.style.display = isOpen ? 'none' : '';
+            chev.style.transform = isOpen ? '' : 'rotate(90deg)';
+        });
+    }
 
     // Plain inputs / textareas / selects — bind change handlers
     body.querySelectorAll('[data-cfg-key]').forEach(inp => {
@@ -1985,12 +2608,14 @@ function renderConfigPanel() {
             const key = inp.dataset.cfgKey;
             n.cfg[key] = inp.value;
             renderNode(n);
+            snapshotState(false);  // debounced
         });
         if (inp.tagName === 'SELECT') {
             inp.addEventListener('change', e => {
                 const key = inp.dataset.cfgKey;
                 n.cfg[key] = inp.value;
                 renderNode(n);
+                snapshotState(true);
             });
         }
     });
@@ -2088,6 +2713,7 @@ function deleteNode(id) {
     if (el) el.remove();
     renderEdges();
     renderConfigPanel();
+    snapshotState(true);
 }
 
 // ============================================================
@@ -2188,22 +2814,184 @@ function applyAIWorkflow(parsed) {
 // ============================================================
 // Templates
 // ============================================================
+// ============================================================
+// User templates (browser-local, per-user)
+// ============================================================
+// User-saved templates live in localStorage under flowagent.userTemplates
+// as a map of slug -> template object. Same shape as the built-in TEMPLATES
+// entries except they include a `_user: true` flag so the UI can show a
+// delete button.
+
+function loadUserTemplates() {
+    try {
+        return JSON.parse(localStorage.getItem('flowagent.userTemplates') || '{}');
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveUserTemplates(map) {
+    try {
+        localStorage.setItem('flowagent.userTemplates', JSON.stringify(map));
+        return true;
+    } catch (e) {
+        frappe.show_alert({ message: 'Could not save (storage quota?)', indicator: 'red' }, 4);
+        return false;
+    }
+}
+
+// Save the current canvas as a user template.
+function saveAsTemplate() {
+    if (!state.nodes.length) {
+        frappe.show_alert({ message: 'Canvas is empty', indicator: 'orange' }, 3);
+        return;
+    }
+    syncAllControls();
+    const d = new frappe.ui.Dialog({
+        title: 'Save as template',
+        fields: [
+            { fieldname: 'name',        label: 'Template name', fieldtype: 'Data', reqd: 1,
+              default: state.workflowName || 'My template' },
+            { fieldname: 'category',    label: 'Category',      fieldtype: 'Data',
+              default: 'Custom' },
+            { fieldname: 'description', label: 'Description',   fieldtype: 'Small Text',
+              description: 'Short summary shown in the template grid' },
+        ],
+        primary_action_label: 'Save',
+        primary_action: vals => {
+            const slug = 'user_' + (vals.name || '').toLowerCase()
+                .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now().toString(36);
+            const map = loadUserTemplates();
+            map[slug] = {
+                name: vals.name,
+                category: vals.category || 'Custom',
+                description: vals.description || '',
+                icon: 'ti-bookmark',
+                accent: '#6366F1',
+                _user: true,
+                // Serialise nodes in template-loader shape: { t, cfg }
+                nodes: state.nodes.map(n => ({ t: n.type, cfg: JSON.parse(JSON.stringify(n.cfg || {})) })),
+                // Edges + trigger so re-loaded templates wire up exactly
+                _edges: state.edges.map(e => ({ from: e.from, to: e.to, fromPort: e.fromPort })),
+                _node_ids: state.nodes.map(n => n.id),
+                trigger: inferTriggerFromCanvas(),
+            };
+            if (!saveUserTemplates(map)) return;
+            d.hide();
+            frappe.show_alert({ message: 'Template saved', indicator: 'green' }, 3);
+        },
+    });
+    d.show();
+}
+
+function deleteUserTemplate(slug) {
+    const map = loadUserTemplates();
+    if (!map[slug]) return;
+    frappe.confirm(`Delete template "${map[slug].name}"?`, () => {
+        delete map[slug];
+        saveUserTemplates(map);
+        // Reopen the dialog to refresh
+        const open = document.querySelector('.fa-templates-grid');
+        if (open) {
+            // Find and close existing dialog
+            $('.modal.fade.in, .modal.fade.show').modal('hide');
+        }
+        templatesDialog();
+    });
+}
+
+// Export a template (built-in or user) as a downloadable JSON file.
+function exportTemplate(key) {
+    const tpl = TEMPLATES[key] || loadUserTemplates()[key];
+    if (!tpl) return;
+    const json = JSON.stringify({
+        flowagent_template_version: 1,
+        slug: key,
+        ...tpl,
+    }, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(tpl.name || key).replace(/[^a-z0-9]+/gi, '_')}.flowagent-template.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+// Import a template from a user-picked JSON file. Stored as a user template.
+function importTemplateFromFile() {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.json,application/json';
+    inp.onchange = () => {
+        const file = inp.files && inp.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!data.nodes || !Array.isArray(data.nodes)) {
+                    throw new Error('JSON does not look like a template (missing nodes)');
+                }
+                const slug = (data.slug || 'imported_' + Date.now().toString(36));
+                const map = loadUserTemplates();
+                map[slug] = {
+                    name: data.name || 'Imported template',
+                    category: data.category || 'Imported',
+                    description: data.description || '',
+                    icon: data.icon || 'ti-download',
+                    accent: data.accent || '#6366F1',
+                    _user: true,
+                    nodes: data.nodes,
+                    _edges: data._edges,
+                    _node_ids: data._node_ids,
+                    trigger: data.trigger,
+                };
+                saveUserTemplates(map);
+                frappe.show_alert({ message: `Imported "${map[slug].name}"`, indicator: 'green' }, 3);
+                $('.modal.fade.in, .modal.fade.show').modal('hide');
+                templatesDialog();
+            } catch (err) {
+                frappe.show_alert({ message: 'Invalid template file: ' + err.message, indicator: 'red' }, 6);
+            }
+        };
+        reader.readAsText(file);
+    };
+    inp.click();
+}
+
 function templatesDialog() {
+    const userTemplates = loadUserTemplates();
+    const allTpls = { ...TEMPLATES, ...userTemplates };
+
     // Build the card grid HTML
-    const cards = Object.entries(TEMPLATES).map(([key, tpl]) => {
-        const nodeChips = tpl.nodes.map(n => {
-            const def = NODE_DEFS[n.t];
-            return def ? `<span class="fa-tpl-chip" style="color:${def.iconColor}">${frappe.utils.escape_html(def.label)}</span>` : '';
-        }).join('');
+    const cards = Object.entries(allTpls).map(([key, tpl]) => {
+        const isUser = tpl._user;
         return `
             <div class="fa-template-card" data-tpl="${key}"
                  style="--accent:${tpl.accent};--accent-bg:${tpl.accent}22">
+                ${isUser ? '<div class="fa-tpl-user-badge">yours</div>' : ''}
                 <div class="fa-tpl-icon"><i class="ti ${tpl.icon}"></i></div>
                 <div class="fa-tpl-title">${frappe.utils.escape_html(tpl.name)}</div>
-                <div class="fa-tpl-desc">${frappe.utils.escape_html(tpl.description)}</div>
+                <div class="fa-tpl-desc">${frappe.utils.escape_html(tpl.description || '')}</div>
                 <div class="fa-tpl-meta">
                     <span class="fa-tpl-chip">${frappe.utils.escape_html(tpl.category)}</span>
                     <span class="fa-tpl-chip">${tpl.nodes.length} nodes</span>
+                </div>
+                <div class="fa-tpl-actions">
+                    <button class="fa-tpl-act" data-tpl-act="export" data-tpl-key="${key}"
+                            title="Export as JSON"
+                            onclick="event.stopPropagation()">
+                        <i class="ti ti-download"></i>
+                    </button>
+                    ${isUser ? `
+                    <button class="fa-tpl-act fa-tpl-act-del" data-tpl-act="delete" data-tpl-key="${key}"
+                            title="Delete template"
+                            onclick="event.stopPropagation()">
+                        <i class="ti ti-trash"></i>
+                    </button>` : ''}
                 </div>
             </div>`;
     }).join('');
@@ -2271,7 +3059,66 @@ function templatesDialog() {
                     font-weight: 500;
                 }
                 [data-theme="dark"] .fa-tpl-chip { background: rgba(255,255,255,0.06); }
+                .fa-tpl-user-badge {
+                    position: absolute;
+                    top: 12px; right: 12px;
+                    font-size: 9px;
+                    font-weight: 600;
+                    color: #6366F1;
+                    background: rgba(99,102,241,0.1);
+                    padding: 2px 7px;
+                    border-radius: 9px;
+                    text-transform: uppercase;
+                    letter-spacing: 0.07em;
+                }
+                .fa-tpl-actions {
+                    position: absolute;
+                    bottom: 10px; right: 10px;
+                    display: none;
+                    gap: 4px;
+                }
+                .fa-template-card:hover .fa-tpl-actions { display: flex; }
+                .fa-tpl-act {
+                    width: 26px; height: 26px;
+                    border-radius: 5px;
+                    border: 1px solid var(--border-color, #d4d4d8);
+                    background: white;
+                    color: var(--text-muted, #71717A);
+                    cursor: pointer;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                [data-theme="dark"] .fa-tpl-act { background: #131316; color: #A1A1AA; }
+                .fa-tpl-act:hover {
+                    background: #f4f4f5; color: var(--text-color, #18181B);
+                }
+                .fa-tpl-act-del:hover { color: #B91C1C; border-color: #FCA5A5; }
+                .fa-tpl-tools {
+                    display: flex; gap: 8px; margin-bottom: 12px;
+                }
+                .fa-tpl-tools-btn {
+                    padding: 6px 12px;
+                    border-radius: 6px;
+                    border: 1px solid var(--border-color, #d4d4d8);
+                    background: white;
+                    color: var(--text-color, #18181B);
+                    font-size: 12px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    display: inline-flex; align-items: center; gap: 5px;
+                }
+                [data-theme="dark"] .fa-tpl-tools-btn {
+                    background: #131316; color: #F5F5F7; border-color: #2A2A30;
+                }
+                .fa-tpl-tools-btn:hover { background: #f4f4f5; }
                 </style>
+                <div class="fa-tpl-tools">
+                    <button class="fa-tpl-tools-btn" data-tpl-tools="save-as">
+                        <i class="ti ti-bookmark-plus"></i> Save canvas as template
+                    </button>
+                    <button class="fa-tpl-tools-btn" data-tpl-tools="import">
+                        <i class="ti ti-upload"></i> Import JSON
+                    </button>
+                </div>
                 <div class="fa-templates-grid">${cards}</div>
             `,
         }],
@@ -2280,32 +3127,65 @@ function templatesDialog() {
 
     // Bind click handlers after the dialog body renders
     setTimeout(() => {
-        d.$wrapper.find('.fa-template-card').on('click', function () {
+        d.$wrapper.find('.fa-template-card').on('click', function (e) {
+            // Per-card action buttons stop propagation, so this only fires
+            // on a real card click (not on Export/Delete buttons).
             const key = this.dataset.tpl;
             d.hide();
             loadTemplate(key);
+        });
+        d.$wrapper.find('[data-tpl-act="export"]').on('click', function (e) {
+            e.stopPropagation();
+            exportTemplate(this.dataset.tplKey);
+        });
+        d.$wrapper.find('[data-tpl-act="delete"]').on('click', function (e) {
+            e.stopPropagation();
+            deleteUserTemplate(this.dataset.tplKey);
+        });
+        // Header action buttons (Save as / Import)
+        d.$wrapper.find('[data-tpl-tools="save-as"]').on('click', () => {
+            d.hide();
+            saveAsTemplate();
+        });
+        d.$wrapper.find('[data-tpl-tools="import"]').on('click', () => {
+            importTemplateFromFile();
         });
     }, 50);
 }
 
 function loadTemplate(key) {
-    const tpl = TEMPLATES[key];
+    const tpl = TEMPLATES[key] || loadUserTemplates()[key];
     if (!tpl) return;
     clearCanvas(false);
     state.workflowName = tpl.name;
     document.getElementById('fa-wf-name').textContent = tpl.name;
     state.trigger = tpl.trigger || { type: 'Manual' };
-    // Lay out nodes left-to-right with extra horizontal space
-    tpl.nodes.forEach((nd, idx) => {
-        addNode(nd.t, 40 + idx * 220, 160, nd.cfg);
-    });
-    // chain them — branch nodes use out-yes by default
-    for (let i = 0; i < state.nodes.length - 1; i++) {
-        const from = state.nodes[i], to = state.nodes[i + 1];
-        if (from.def && from.def.hasBranch) {
-            state.edges.push({ from: from.id, to: to.id, fromPort: 'out-yes' });
-        } else {
-            state.edges.push({ from: from.id, to: to.id });
+
+    if (tpl._user && tpl._edges && tpl._node_ids) {
+        // User template — preserve the exact graph topology, not auto-chain
+        const idMap = {};  // original id -> new id assigned by addNode
+        tpl.nodes.forEach((nd, idx) => {
+            const newId = addNode(nd.t, 40 + idx * 220, 160, nd.cfg);
+            idMap[tpl._node_ids[idx]] = newId;
+        });
+        tpl._edges.forEach(e => {
+            const from = idMap[e.from], to = idMap[e.to];
+            if (from && to) {
+                state.edges.push({ from, to, fromPort: e.fromPort });
+            }
+        });
+    } else {
+        // Built-in template — lay out left-to-right and auto-chain
+        tpl.nodes.forEach((nd, idx) => {
+            addNode(nd.t, 40 + idx * 220, 160, nd.cfg);
+        });
+        for (let i = 0; i < state.nodes.length - 1; i++) {
+            const from = state.nodes[i], to = state.nodes[i + 1];
+            if (from.def && from.def.hasBranch) {
+                state.edges.push({ from: from.id, to: to.id, fromPort: 'out-yes' });
+            } else {
+                state.edges.push({ from: from.id, to: to.id });
+            }
         }
     }
     renderEdges();
@@ -2376,14 +3256,70 @@ function runWorkflow() {
 }
 
 function executeRun(payload) {
-    addLog('Running…', 'info');
-    document.querySelectorAll('.fa-node-status').forEach(s => s.style.background = 'var(--border-color)');
+    const dry = state.testMode ? 1 : 0;
+    addLog(dry ? 'Test run (dry, no writes)…' : 'Running…', 'info');
+
+    // Reset node status dots, warning badges, and any leftover run-state
+    // classes from a previous run so the canvas starts clean.
+    document.querySelectorAll('.fa-node-status').forEach(s => {
+        s.removeAttribute('data-status');
+        s.style.background = '';
+    });
+    document.querySelectorAll('.fa-node-warn-badge').forEach(b => b.remove());
+    document.querySelectorAll('.fa-wf-node').forEach(n => {
+        n.classList.remove('fa-node-running', 'fa-node-completed', 'fa-node-failed');
+    });
+    state.edges.forEach(e => { e.runHighlight = false; e.runActive = false; });
+    renderEdges();
+
+    // Show the Trace tab immediately with a "running" placeholder so the
+    // user knows things are happening even before the first step lands.
+    switchTab('trace');
+    renderTracePane({
+        name: 'pending',
+        status: 'Running',
+        duration_ms: 0,
+        steps: [],
+        trigger_source: dry ? 'studio_dry_run' : 'studio_manual',
+    });
+
+    // Stop any prior polling
+    if (state._runPollTimer) {
+        clearTimeout(state._runPollTimer);
+        state._runPollTimer = null;
+    }
+
+    frappe.call({
+        method: 'flowagent.api.studio.run_workflow_now',
+        args: {
+            name: state.currentWorkflow,
+            sync: 0,  // enqueue async so we can stream progress via polling
+            payload: JSON.stringify(payload || {}),
+            dry_run: dry,
+        },
+        callback: r => {
+            const queued = r.message;
+            if (!queued || !queued.run_name) {
+                addLog('Run queue failed — falling back to sync', 'warn');
+                return _executeRunSync(payload, dry);
+            }
+            state.lastPayload = payload;
+            _startPollingRun(queued.run_name);
+        },
+        error: err => addLog('Run failed: ' + (err.message || err), 'err'),
+    });
+}
+
+// Sync-execution fallback for when async enqueue isn't available
+// (e.g. Redis down — run_workflow_now will still try the inline path).
+function _executeRunSync(payload, dry) {
     frappe.call({
         method: 'flowagent.api.studio.run_workflow_now',
         args: {
             name: state.currentWorkflow,
             sync: 1,
             payload: JSON.stringify(payload || {}),
+            dry_run: dry,
         },
         callback: r => {
             const run = r.message;
@@ -2391,11 +3327,92 @@ function executeRun(payload) {
             state.lastRun = run;
             paintTrace(run);
             refreshStats();
-            const colour = run.status === 'Success' ? 'ok' : 'err';
-            addLog(`Run ${run.name}: ${run.status} (${run.duration_ms}ms)`, colour);
+            switchTab('trace');
+            addLog(`Run ${run.name}: ${run.status} (${run.duration_ms}ms)`,
+                   run.status === 'Success' ? 'ok' : 'err');
         },
         error: err => addLog('Run failed: ' + (err.message || err), 'err'),
     });
+}
+
+// Poll a queued run until it reaches a terminal state. We paint each
+// intermediate response so users see steps light up as the engine
+// records them. Starts at 400ms for snappy initial response, backs off
+// to 1500ms after 10 polls so a long workflow doesn't hammer the server.
+// Pauses while the tab is hidden — browsers throttle background timers
+// anyway, but pausing explicitly saves API calls.
+function _startPollingRun(runName) {
+    let lastStepCount = -1;
+    let consecutiveErrors = 0;
+    let pollCount = 0;
+    let runFinished = false;
+    const TERMINAL = new Set(['Success', 'Failed', 'Timeout', 'Cancelled']);
+
+    const nextPollDelay = () => pollCount < 10 ? 400 : 1500;
+
+    const scheduleNext = () => {
+        if (runFinished) return;
+        if (document.hidden) {
+            // Wait for visibilitychange to resume
+            return;
+        }
+        state._runPollTimer = setTimeout(fetchOnce, nextPollDelay());
+    };
+
+    const fetchOnce = () => {
+        pollCount++;
+        frappe.call({
+            method: 'flowagent.api.studio.get_run',
+            args: { run_name: runName },
+            callback: r => {
+                consecutiveErrors = 0;
+                const run = r.message;
+                if (!run) { scheduleNext(); return; }
+                const steps = run.steps || [];
+                if (steps.length !== lastStepCount || TERMINAL.has(run.status)) {
+                    lastStepCount = steps.length;
+                    state.lastRun = run;
+                    paintTrace(run);
+                }
+                if (TERMINAL.has(run.status)) {
+                    runFinished = true;
+                    if (state._runPollTimer) {
+                        clearTimeout(state._runPollTimer);
+                        state._runPollTimer = null;
+                    }
+                    refreshStats();
+                    addLog(`Run ${run.name}: ${run.status} (${run.duration_ms}ms)`,
+                           run.status === 'Success' ? 'ok' : 'err');
+                    return;
+                }
+                scheduleNext();
+            },
+            error: () => {
+                consecutiveErrors++;
+                if (consecutiveErrors >= 5) {
+                    runFinished = true;
+                    if (state._runPollTimer) {
+                        clearTimeout(state._runPollTimer);
+                        state._runPollTimer = null;
+                    }
+                    addLog('Lost contact with the run — check Runs tab manually', 'warn');
+                    return;
+                }
+                scheduleNext();
+            },
+        });
+    };
+
+    // Resume polling immediately when the user returns to the tab
+    const onVisibility = () => {
+        if (!document.hidden && !runFinished && !state._runPollTimer) {
+            fetchOnce();
+        }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    state._runPollVisHandler = onVisibility;
+
+    fetchOnce();
 }
 
 function saveThenRun() {
@@ -2427,21 +3444,358 @@ function saveThenRun() {
 }
 
 function paintTrace(run) {
-    // Reset all status dots
+    // Reset all status dots + warning badges + run-state classes
     document.querySelectorAll('.fa-node-status').forEach(s => {
         s.removeAttribute('data-status');
         s.style.background = '';
     });
-    state.edges.forEach(e => e.runHighlight = false);
-    (run.steps || []).forEach(step => {
+    document.querySelectorAll('.fa-node-warn-badge').forEach(b => b.remove());
+    document.querySelectorAll('.fa-wf-node').forEach(n => {
+        n.classList.remove('fa-node-running', 'fa-node-completed', 'fa-node-failed');
+    });
+
+    state.edges.forEach(e => {
+        e.runHighlight = false;
+        e.runActive = false;
+    });
+
+    const steps = run.steps || [];
+    const completedIds = new Set();
+    let lastFailedId = null;
+
+    steps.forEach(step => {
+        const nodeEl = document.getElementById('fa-node-' + step.node_id);
         const dot = document.getElementById('fa-ns-' + step.node_id);
         if (dot) {
             dot.setAttribute('data-status', step.status);
         }
+        if (nodeEl) {
+            if (step.status === 'Success') {
+                nodeEl.classList.add('fa-node-completed');
+                completedIds.add(step.node_id);
+            } else if (step.status === 'Failed' || step.status === 'Timeout') {
+                nodeEl.classList.add('fa-node-failed');
+                lastFailedId = step.node_id;
+            }
+        }
+        // Render warnings appear in step.error prefixed with '⚠' even on Success.
+        // Surface them as a small badge on the node so users can see at a glance
+        // which nodes had template issues.
+        if (nodeEl && step.error && (step.error.startsWith('⚠') || step.status === 'Success' && step.error)) {
+            const badge = document.createElement('div');
+            badge.className = 'fa-node-warn-badge';
+            badge.innerHTML = '<i class="ti ti-alert-triangle"></i>';
+            badge.title = step.error.replace(/^⚠\s*/, '');
+            nodeEl.appendChild(badge);
+        }
         addLog(`#${step.step_index} ${step.node_label} → ${step.status}${step.error ? ' — ' + (step.error || '').split('\n')[0] : ''} (${step.duration_ms}ms)`,
-               step.status === 'Success' ? 'ok' : step.status === 'Failed' ? 'err' : 'warn');
+               step.status === 'Success' ? (step.error ? 'warn' : 'ok') : step.status === 'Failed' ? 'err' : 'warn');
     });
+
+    // Mark edges between completed nodes as run-highlighted (steady glow).
+    state.edges.forEach(e => {
+        if (completedIds.has(e.from) && completedIds.has(e.to)) {
+            e.runHighlight = true;
+        }
+    });
+
+    // While the run is still in flight, figure out which node(s) are
+    // *about* to fire (or are firing right now). That's: the downstream
+    // targets of the most recently completed step that haven't themselves
+    // recorded a step yet. Highlight those nodes + the edges leading to
+    // them with the "running" animation.
+    const runIsLive = run.status === 'Running' || run.status === 'Queued';
+    if (runIsLive && steps.length > 0) {
+        const recordedIds = new Set(steps.map(s => s.node_id));
+        const lastStep = steps[steps.length - 1];
+        const lastPort = (lastStep.output && typeof lastStep.output === 'object' && lastStep.output._dry_run)
+            ? null  // dry-run doesn't tell us which branch was taken; just highlight all
+            : null; // we don't have port info on the step yet — light all outgoing edges
+
+        state.edges.forEach(e => {
+            if (e.from === lastStep.node_id && !recordedIds.has(e.to)) {
+                e.runActive = true;
+                const nextNode = document.getElementById('fa-node-' + e.to);
+                if (nextNode) nextNode.classList.add('fa-node-running');
+            }
+        });
+    } else if (runIsLive && steps.length === 0) {
+        // No steps recorded yet — the trigger node is about to fire.
+        // Highlight any trigger-type nodes on the canvas as "running".
+        state.nodes.forEach(n => {
+            if (n.type && n.type.startsWith('trigger_')) {
+                const el = document.getElementById('fa-node-' + n.id);
+                if (el) el.classList.add('fa-node-running');
+            }
+        });
+    }
+
     renderEdges();
+    renderTracePane(run);
+}
+
+// ============================================================
+// Trace pane — step-by-step inspector with JSON variable trees
+// ============================================================
+
+// Compact token counts: 12345 → "12.3k", 999 → "999"
+function formatTokens(n) {
+    n = Number(n || 0);
+    if (n < 1000) return String(n);
+    if (n < 10000) return (n / 1000).toFixed(1) + 'k';
+    return Math.round(n / 1000) + 'k';
+}
+
+// Format a small USD amount with appropriate precision.
+function formatCost(usd) {
+    usd = Number(usd || 0);
+    if (usd === 0) return '$0';
+    if (usd < 0.01) return '<$0.01';
+    if (usd < 1)    return '$' + usd.toFixed(3);
+    return '$' + usd.toFixed(2);
+}
+
+function renderTracePane(run) {
+    state.lastRun = run;
+    const body = document.getElementById('fa-trace-body');
+    const replayBtn = document.getElementById('fa-trace-replay');
+    if (!body) return;
+
+    if (!run || !run.steps || !run.steps.length) {
+        body.innerHTML = '<p class="fa-muted">No steps recorded for this run</p>';
+        if (replayBtn) replayBtn.style.display = 'none';
+        return;
+    }
+
+    if (replayBtn) replayBtn.style.display = '';
+
+    const statusClass = run.status === 'Success' ? 'fa-trace-status-ok'
+                      : run.status === 'Failed' ? 'fa-trace-status-err'
+                      : 'fa-trace-status-warn';
+
+    const errorMsg = run.error_message
+        ? `<div class="fa-trace-error">${frappe.utils.escape_html(run.error_message).split('\n')[0]}</div>`
+        : '';
+
+    let stepsHtml = '';
+    (run.steps || []).forEach((step, i) => {
+        const stepStatus = step.status === 'Success' ? 'ok' : step.status === 'Failed' ? 'err' : 'warn';
+        const warnIcon = (step.error && step.status === 'Success') ? '<i class="ti ti-alert-triangle" style="color:var(--fa-warn)" title="Render warning"></i> ' : '';
+        // Detect dry-run output ({"_dry_run": true, ...}) so users can tell at
+        // a glance which steps were simulated vs actually executed.
+        let isDry = false;
+        try {
+            const out = typeof step.output === 'string' ? JSON.parse(step.output) : step.output;
+            isDry = out && out._dry_run === true;
+        } catch (_) { /* not JSON or not parseable */ }
+        const dryPill = isDry ? '<span class="fa-trace-dry-pill">🧪 dry</span>' : '';
+        stepsHtml += `
+            <div class="fa-trace-step" data-step-idx="${i}">
+                <div class="fa-trace-step-head">
+                    <span class="fa-trace-step-idx">${step.step_index}</span>
+                    <span class="fa-trace-step-dot fa-trace-step-dot-${stepStatus}"></span>
+                    <span class="fa-trace-step-label">${warnIcon}${frappe.utils.escape_html(step.node_label || step.node_type || '')}</span>
+                    ${dryPill}
+                    <span class="fa-trace-step-ms">${step.duration_ms || 0}ms</span>
+                    <i class="ti ti-chevron-down fa-trace-step-chevron"></i>
+                </div>
+                <div class="fa-trace-step-body" style="display:none">
+                    ${step.error ? `<div class="fa-trace-${stepStatus === 'err' ? 'error' : 'warn'}-msg">${frappe.utils.escape_html(step.error)}</div>` : ''}
+                    <div class="fa-trace-section-label">Input <span class="fa-trace-hint">click any value to copy its path</span></div>
+                    <div class="fa-trace-tree" data-tree="input-${i}"></div>
+                    <div class="fa-trace-section-label">Output</div>
+                    <div class="fa-trace-tree" data-tree="output-${i}"></div>
+                </div>
+            </div>`;
+    });
+
+    // Render AI usage row only if this run actually made AI calls — for a
+    // pure DocType-create workflow with no LLM nodes there's nothing to show.
+    const tokensTotal = (run.ai_tokens_in || 0) + (run.ai_tokens_out || 0);
+    const costStr = (run.ai_cost_usd || 0) > 0
+        ? '$' + (run.ai_cost_usd || 0).toFixed(4)
+        : '—';
+    const usageRow = (run.ai_calls || 0) > 0 ? `
+        <div class="fa-trace-trigger-info">
+            <span class="fa-trace-meta-label">AI</span>
+            <span class="fa-trace-meta-val">
+                ${run.ai_calls} call${run.ai_calls === 1 ? '' : 's'}
+                · ${formatTokens(run.ai_tokens_in)} in / ${formatTokens(run.ai_tokens_out)} out
+                · ${costStr}
+            </span>
+        </div>` : '';
+
+    body.innerHTML = `
+        <div class="fa-trace-header">
+            <div class="fa-trace-run-name">${run.name || 'Run'}</div>
+            <div class="fa-trace-meta">
+                <span class="fa-trace-status-pill ${statusClass}">${run.status || ''}</span>
+                <span class="fa-trace-meta-item">${run.duration_ms || 0}ms</span>
+                <span class="fa-trace-meta-item">${(run.steps || []).length} steps</span>
+            </div>
+            ${errorMsg}
+            <div class="fa-trace-trigger-info">
+                <span class="fa-trace-meta-label">trigger</span>
+                <span class="fa-trace-meta-val">${frappe.utils.escape_html(run.trigger_source || 'manual')}</span>
+            </div>
+            ${usageRow}
+        </div>
+        <div class="fa-trace-steps">${stepsHtml}</div>
+    `;
+
+    // Bind expand/collapse on each step
+    body.querySelectorAll('.fa-trace-step').forEach((stepEl, i) => {
+        const head = stepEl.querySelector('.fa-trace-step-head');
+        head.addEventListener('click', () => {
+            const sb = stepEl.querySelector('.fa-trace-step-body');
+            const chev = stepEl.querySelector('.fa-trace-step-chevron');
+            const open = sb.style.display !== 'none';
+            sb.style.display = open ? 'none' : '';
+            stepEl.classList.toggle('fa-trace-step-open', !open);
+            if (!open) {
+                // Lazy-render the trees on first expand
+                const step = run.steps[i];
+                const inEl = stepEl.querySelector(`[data-tree="input-${i}"]`);
+                const outEl = stepEl.querySelector(`[data-tree="output-${i}"]`);
+                // Snapshots come back from the server as JSON strings (Long Text).
+                // Parse them defensively — fall back to the raw string if invalid.
+                const safeParse = v => {
+                    if (v === null || v === undefined || v === '') return null;
+                    if (typeof v !== 'string') return v;
+                    try { return JSON.parse(v); }
+                    catch (_) { return v; }
+                };
+                if (inEl && !inEl.dataset.rendered) {
+                    renderJsonTree(inEl, safeParse(step.input), step.node_id || '');
+                    inEl.dataset.rendered = '1';
+                }
+                if (outEl && !outEl.dataset.rendered) {
+                    renderJsonTree(outEl, safeParse(step.output), step.node_id || '');
+                    outEl.dataset.rendered = '1';
+                }
+            }
+        });
+    });
+}
+
+// Render a value as an interactive JSON tree. Each leaf is clickable to
+// copy a Jinja path. `pathPrefix` is the path components leading up to
+// this node (we don't suggest paths to the trigger context since users
+// already know `trigger.doc.X` works — instead we copy the literal value).
+function renderJsonTree(el, value, pathPrefix) {
+    el.innerHTML = '';
+    if (value === null || value === undefined) {
+        el.innerHTML = '<span class="fa-trace-null">∅ no data</span>';
+        return;
+    }
+    const node = buildJsonTreeNode(value, [], 0);
+    el.appendChild(node);
+}
+
+function buildJsonTreeNode(value, path, depth) {
+    const wrap = document.createElement('div');
+    wrap.className = 'fa-tree-node';
+
+    if (value === null) {
+        wrap.innerHTML = '<span class="fa-tree-val fa-tree-null">null</span>';
+        return wrap;
+    }
+    if (typeof value === 'boolean') {
+        wrap.appendChild(_treeLeaf(String(value), 'bool', value, path));
+        return wrap;
+    }
+    if (typeof value === 'number') {
+        wrap.appendChild(_treeLeaf(String(value), 'num', value, path));
+        return wrap;
+    }
+    if (typeof value === 'string') {
+        wrap.appendChild(_treeLeaf(JSON.stringify(value), 'str', value, path));
+        return wrap;
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) {
+            wrap.innerHTML = '<span class="fa-tree-val fa-tree-empty">[ ]</span>';
+            return wrap;
+        }
+        const head = document.createElement('div');
+        head.className = 'fa-tree-collapsible';
+        const isOpen = depth < 1;
+        head.innerHTML = `<span class="fa-tree-toggle">${isOpen ? '▾' : '▸'}</span>
+            <span class="fa-tree-meta">Array · ${value.length} item${value.length === 1 ? '' : 's'}</span>`;
+        wrap.appendChild(head);
+        const list = document.createElement('div');
+        list.className = 'fa-tree-children';
+        list.style.display = isOpen ? '' : 'none';
+        value.forEach((v, i) => {
+            const child = document.createElement('div');
+            child.className = 'fa-tree-row';
+            const key = document.createElement('span');
+            key.className = 'fa-tree-key';
+            key.textContent = '[' + i + ']';
+            child.appendChild(key);
+            child.appendChild(buildJsonTreeNode(v, path.concat([i]), depth + 1));
+            list.appendChild(child);
+        });
+        wrap.appendChild(list);
+        head.addEventListener('click', () => {
+            const open = list.style.display !== 'none';
+            list.style.display = open ? 'none' : '';
+            head.querySelector('.fa-tree-toggle').textContent = open ? '▸' : '▾';
+        });
+        return wrap;
+    }
+    if (typeof value === 'object') {
+        const keys = Object.keys(value);
+        if (keys.length === 0) {
+            wrap.innerHTML = '<span class="fa-tree-val fa-tree-empty">{ }</span>';
+            return wrap;
+        }
+        const head = document.createElement('div');
+        head.className = 'fa-tree-collapsible';
+        const isOpen = depth < 1;
+        head.innerHTML = `<span class="fa-tree-toggle">${isOpen ? '▾' : '▸'}</span>
+            <span class="fa-tree-meta">Object · ${keys.length} field${keys.length === 1 ? '' : 's'}</span>`;
+        wrap.appendChild(head);
+        const list = document.createElement('div');
+        list.className = 'fa-tree-children';
+        list.style.display = isOpen ? '' : 'none';
+        keys.forEach(k => {
+            const child = document.createElement('div');
+            child.className = 'fa-tree-row';
+            const key = document.createElement('span');
+            key.className = 'fa-tree-key';
+            key.textContent = k;
+            child.appendChild(key);
+            child.appendChild(buildJsonTreeNode(value[k], path.concat([k]), depth + 1));
+            list.appendChild(child);
+        });
+        wrap.appendChild(list);
+        head.addEventListener('click', () => {
+            const open = list.style.display !== 'none';
+            list.style.display = open ? 'none' : '';
+            head.querySelector('.fa-tree-toggle').textContent = open ? '▸' : '▾';
+        });
+        return wrap;
+    }
+    wrap.innerHTML = '<span class="fa-tree-val">' + frappe.utils.escape_html(String(value)) + '</span>';
+    return wrap;
+}
+
+function _treeLeaf(displayText, kind, rawValue, path) {
+    const span = document.createElement('span');
+    span.className = 'fa-tree-leaf fa-tree-' + kind;
+    span.textContent = displayText.length > 80 ? displayText.slice(0, 80) + '…' : displayText;
+    span.title = (path.length ? 'Click to copy value' : '') + ' ' + (typeof rawValue === 'string' ? rawValue : '');
+    span.addEventListener('click', e => {
+        e.stopPropagation();
+        const text = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue);
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                frappe.show_alert({ message: 'Copied to clipboard', indicator: 'green' }, 2);
+            });
+        }
+    });
+    return span;
 }
 
 // ============================================================
@@ -2486,7 +3840,9 @@ function openRun(name) {
             const run = r.message;
             if (!run) return;
             state.lastRun = run;
+            state.lastPayload = null;  // replay should re-hydrate from trigger_payload
             paintTrace(run);
+            switchTab('trace');
         },
     });
 }
@@ -2498,28 +3854,37 @@ function refreshTriggerIndicator() {
     const trig = inferTriggerFromCanvas();
     const enabled = state.enabled;
     let txt = '';
+    let title = '';
     let cls = 'fa-trigger-pill';
     if (!enabled) {
-        txt = '○ Disabled';
+        txt = 'Disabled';
+        title = 'Workflow is disabled';
         cls += ' fa-trigger-off';
     } else if (trig.type === 'DocType Event' && trig.doctype && trig.event) {
-        txt = `● Listening: ${trig.doctype} / ${trig.event}`;
+        // Compact: just the doctype name. Full event detail in tooltip.
+        txt = trig.doctype;
+        title = `Listening: ${trig.doctype} / ${trig.event}`;
         cls += ' fa-trigger-on';
     } else if (trig.type === 'Schedule' && trig.cron) {
-        txt = `● Schedule: ${trig.cron}`;
+        txt = 'Schedule';
+        title = `Schedule: ${trig.cron}`;
         cls += ' fa-trigger-on';
     } else if (trig.type === 'Webhook') {
-        txt = '● Webhook ready';
+        txt = 'Webhook';
+        title = 'Webhook trigger active';
         cls += ' fa-trigger-on';
     } else if (trig.type === 'Manual') {
-        txt = '○ Manual';
+        txt = 'Manual';
+        title = 'Manual trigger only';
         cls += ' fa-trigger-off';
     } else {
-        txt = '⚠ Trigger incomplete';
+        txt = 'Setup';
+        title = 'Trigger configuration incomplete';
         cls += ' fa-trigger-warn';
     }
     el.textContent = txt;
     el.className = cls;
+    el.title = title;
 }
 
 function refreshStats() {
@@ -2532,8 +3897,62 @@ function refreshStats() {
             document.getElementById('fa-stat-ok').textContent = s.ok || 0;
             document.getElementById('fa-stat-err').textContent = s.err || 0;
             document.getElementById('fa-stat-ms').textContent = s.avg_ms ? (s.avg_ms + 'ms') : '—';
+            renderSparkline(s.last_50 || []);
+            renderTopErrors(s.top_errors || []);
+            renderAIUsage(s);
         },
     });
+}
+
+function renderAIUsage(s) {
+    const section = document.getElementById('fa-ai-usage-section');
+    if (!section) return;
+    if (!s || !s.ai_calls_total) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+    document.getElementById('fa-stat-ai-calls').textContent  = s.ai_calls_total || 0;
+    document.getElementById('fa-stat-ai-tokens').textContent = formatTokens(s.ai_tokens_total || 0);
+    document.getElementById('fa-stat-ai-cost').textContent   = formatCost(s.ai_cost_total || 0);
+}
+
+// Render a sparkline of the last 50 runs as colored bars. Bar height
+// encodes duration_ms (clamped), colour encodes success/failure.
+function renderSparkline(rows) {
+    const wrap = document.getElementById('fa-sparkline-wrap');
+    if (!wrap) return;
+    if (!rows.length) {
+        wrap.innerHTML = '<p class="fa-muted" style="padding:14px 0">No runs yet</p>';
+        return;
+    }
+    const maxMs = Math.max(...rows.map(r => r.duration_ms || 0), 100);
+    const bars = rows.map(r => {
+        const cls = r.status === 'Success' ? 'fa-spark-ok'
+                  : r.status === 'Failed' || r.status === 'Timeout' ? 'fa-spark-err'
+                  : 'fa-spark-warn';
+        const heightPct = Math.max(8, Math.min(100, ((r.duration_ms || 0) / maxMs) * 100));
+        return `<div class="fa-spark-bar ${cls}" style="height:${heightPct}%"
+                     title="${r.status} · ${r.duration_ms || 0}ms"></div>`;
+    }).join('');
+    wrap.innerHTML = `<div class="fa-sparkline">${bars}</div>`;
+}
+
+function renderTopErrors(errors) {
+    const section = document.getElementById('fa-top-errors-section');
+    const body = document.getElementById('fa-top-errors');
+    if (!section || !body) return;
+    if (!errors.length) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+    body.innerHTML = errors.map(e => `
+        <div class="fa-top-err">
+            <span class="fa-top-err-count">${e.count}×</span>
+            <span class="fa-top-err-msg">${frappe.utils.escape_html(e.error)}</span>
+        </div>
+    `).join('');
 }
 
 // ============================================================

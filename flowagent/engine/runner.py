@@ -63,11 +63,21 @@ class Runner:
         trigger_source: str = "manual",
         payload: dict | None = None,
         user: str | None = None,
+        dry_run: bool = False,
+        existing_run_name: str | None = None,
     ):
         self.workflow_name = workflow_name
         self.trigger_source = trigger_source
         self.payload = payload or {}
         self.user = user or frappe.session.user
+        # Dry-run mode: write nodes don't actually mutate the DB,
+        # integration nodes return fake responses, but AI and read
+        # nodes execute for real so the user can preview the full flow.
+        self.dry_run = dry_run
+        # If the caller pre-created the run doc (e.g. the API needs to return
+        # the run name immediately for polling), we'll adopt it instead of
+        # creating a new one.
+        self.existing_run_name = existing_run_name
 
         # Loaded in _load()
         self.wf = None
@@ -243,7 +253,26 @@ class Runner:
 
         step_start = time.monotonic()
         attempt = 0
-        max_attempts = (self.wf.max_retries or 0) + 1 if self.wf.on_error == "Retry" else 1
+        # Per-node retry config takes precedence over workflow-level. This
+        # lets you mark HTTP/AI nodes as retry-3 while keeping write nodes
+        # at retry-0 (writes that fail are usually deterministic bugs).
+        node_retry_raw = rendered_cfg.get("retry_attempts")
+        node_delay_raw = rendered_cfg.get("retry_delay_ms")
+        try:
+            node_retries = int(node_retry_raw) if node_retry_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            node_retries = None
+        try:
+            node_delay_ms = int(node_delay_raw) if node_delay_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            node_delay_ms = None
+
+        if node_retries is not None:
+            max_attempts = node_retries + 1
+        elif self.wf.on_error == "Retry":
+            max_attempts = (self.wf.max_retries or 0) + 1
+        else:
+            max_attempts = 1
 
         while True:
             attempt += 1
@@ -284,8 +313,12 @@ class Runner:
                 ms = int((time.monotonic() - step_start) * 1000)
                 tb = traceback.format_exc()
                 if attempt < max_attempts:
-                    # backoff between retries
-                    time.sleep(min(2 ** (attempt - 1), 8))
+                    # Backoff: if the node set an explicit delay, honor it.
+                    # Otherwise exponential up to 8s.
+                    if node_delay_ms is not None:
+                        time.sleep(max(0, node_delay_ms) / 1000.0)
+                    else:
+                        time.sleep(min(2 ** (attempt - 1), 8))
                     continue
                 self._record_step(step_index, node, "Failed",
                                  duration_ms=ms,
@@ -320,6 +353,12 @@ class Runner:
     # Recording
     # ------------------------------------------------------------------
     def _create_run_doc(self):
+        if self.existing_run_name:
+            # Caller already created the run doc (and committed it). Adopt
+            # it so polling consumers can see the run from the moment the
+            # API call returned.
+            self.run_doc = frappe.get_doc("FlowAgent Workflow Run", self.existing_run_name)
+            return
         self.run_doc = frappe.get_doc({
             "doctype": "FlowAgent Workflow Run",
             "workflow": self.workflow_name,
@@ -360,6 +399,41 @@ class Runner:
             "output_snapshot": _safe_json(output_snapshot),
             "error": error[:140000] if error else "",
         })
+        # Flush incrementally so the Studio's polling UI can update
+        # mid-run instead of waiting for the whole workflow.
+        self._flush_progress()
+
+    def _flush_progress(self):
+        """Persist the current step list to the run doc.
+
+        Lets a polling consumer (the Studio canvas during a Run) see steps
+        appear one at a time instead of all at once when the workflow ends.
+        We swallow errors here — if a flush fails, the workflow continues
+        and the final save in `_finalise` is still authoritative.
+        """
+        if not self.run_doc:
+            return
+        try:
+            self.run_doc.status = "Running"
+            usage = getattr(self, "_token_usage", None) or {}
+            # Reflect current AI usage so the polling UI can show tokens
+            # ticking up as the workflow progresses.
+            self.run_doc.ai_calls      = usage.get("calls", 0)
+            self.run_doc.ai_tokens_in  = usage.get("input", 0)
+            self.run_doc.ai_tokens_out = usage.get("output", 0)
+            self.run_doc.ai_cost_usd   = round(usage.get("cost_usd", 0.0), 6)
+            self.run_doc.set("steps", [])
+            for s in self.steps:
+                self.run_doc.append("steps", s)
+            self.run_doc.flags.ignore_permissions = True
+            self.run_doc.save(ignore_permissions=True)
+            frappe.db.commit()
+        except Exception as e:
+            # Streaming is best-effort; never let it abort the workflow
+            frappe.log_error(
+                title=f"FlowAgent: progress flush failed for {self.run_doc.name}",
+                message=str(e),
+            )
 
     def _finalise(self, status: str, error: str = ""):
         if not self.run_doc:
@@ -372,6 +446,13 @@ class Runner:
             self.run_doc.error_message = error[:140000]
         if self.context:
             self.run_doc.final_context = _safe_json(self.context.snapshot())
+        # Persist AI usage if any nodes recorded it. Defaults to zero so a
+        # workflow with no AI calls still shows clean numbers in the UI.
+        usage = getattr(self, "_token_usage", None) or {}
+        self.run_doc.ai_calls      = usage.get("calls", 0)
+        self.run_doc.ai_tokens_in  = usage.get("input", 0)
+        self.run_doc.ai_tokens_out = usage.get("output", 0)
+        self.run_doc.ai_cost_usd   = round(usage.get("cost_usd", 0.0), 6)
         # Reload to get the latest before we overwrite the child table
         self.run_doc.set("steps", [])
         for s in self.steps:
