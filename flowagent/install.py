@@ -54,35 +54,36 @@ def _ensure_settings():
 
 
 def _refresh_dashboard_assets():
-    """Force-import every FlowAgent Number Card and Dashboard Chart JSON
-    file from disk.
+    """Create / update every FlowAgent Number Card and Dashboard Chart
+    referenced by the workspace.
 
-    Why: Frappe's automatic sync during migrate picks up DocTypes and
-    Reports reliably, but Number Card / Dashboard Chart JSONs in module
-    folders are NOT always re-imported on subsequent migrates — and
-    sometimes not imported at all if the order of operations is off.
+    Why we don't just use `frappe.modules.import_file.import_file_by_path`:
+    Number Card has an `autoname: "field:label"` rule. When Frappe inserts
+    a new Number Card via the standard import path, the autoname rule
+    runs during insert and overwrites the explicit `name` from the JSON
+    with the value of the `label` field. So a JSON declaring
+    `{name: "FlowAgent Runs Today", label: "Runs Today"}` ends up
+    creating a record named just "Runs Today" — and the workspace's
+    content blocks (which reference the explicit name) silently fail to
+    render.
 
-    The symptom is a workspace that shows headers and shortcuts but
-    not the cards/charts referenced in its `content` JSON: Frappe
-    couldn't find the records by name so it skipped those blocks.
+    We sidestep this by doing the upsert ourselves with
+    `doc.flags.name_set = True`, which tells Frappe to skip the autoname
+    rule and respect the explicit name.
 
-    Approach:
-      1. Try `import_file_by_path(force=True)` on each JSON — the
-         canonical Frappe mechanism.
-      2. After each import, verify the record exists with the expected
-         name. If not, fall back to explicit creation. This covers a
-         Number Card autoname quirk where `field:label` autoname can
-         re-derive the name from `label` when the explicit `name` is
-         stripped by certain import paths.
-      3. Force `is_public=1` on every record so the workspace can
-         render them regardless of the viewing user's role.
+    We also clean up orphan records (anything in FlowAgent Core module
+    that isn't in our shipped JSON set) — that catches the "Runs Today"
+    style mis-named records left behind by previous installs.
     """
     import glob
     import json as _json
     import os
-    from frappe.modules.import_file import import_file_by_path
 
     app_path = frappe.get_app_path("flowagent")
+    expected_names: dict[str, set[str]] = {
+        "Number Card": set(),
+        "Dashboard Chart": set(),
+    }
 
     for subdir, doctype in (("number_card", "Number Card"),
                             ("dashboard_chart", "Dashboard Chart")):
@@ -93,49 +94,94 @@ def _refresh_dashboard_assets():
             try:
                 with open(path) as f:
                     spec = _json.load(f)
-                expected_name = spec.get("name") or spec.get("label")
+                expected_name = spec.get("name")
                 if not expected_name:
                     continue
-
-                # First attempt: the canonical Frappe import
-                try:
-                    import_file_by_path(path, force=True)
-                except Exception as e:
-                    frappe.log_error(
-                        title=f"FlowAgent: import_file_by_path failed for {doctype} {expected_name}",
-                        message=f"{type(e).__name__}: {e}",
-                    )
-
-                # Verify and fall back to explicit upsert if needed
-                if not frappe.db.exists(doctype, expected_name):
-                    _explicit_upsert(doctype, expected_name, spec)
-
-                # Force is_public so workspaces can render the record
+                expected_names[doctype].add(expected_name)
+                _upsert_with_explicit_name(doctype, expected_name, spec)
+                # Force is_public so the workspace can render the record
+                # regardless of the viewing user's role.
                 if frappe.db.exists(doctype, expected_name):
                     if not frappe.db.get_value(doctype, expected_name, "is_public"):
                         frappe.db.set_value(doctype, expected_name, "is_public", 1)
             except Exception as e:
                 frappe.log_error(
-                    title=f"FlowAgent: failed to refresh {os.path.basename(path)}",
+                    title=f"FlowAgent: failed to install {os.path.basename(path)}",
+                    message=f"{type(e).__name__}: {e}",
+                )
+
+    # Orphan cleanup: anything in our module that we no longer ship.
+    # Important safety check: we ONLY delete records whose name matches a
+    # `label` we shipped. That catches the "Runs Today"-style mis-named
+    # records that the v0.3.4/v0.3.5 import bug created (autonamed from
+    # the label field), without touching any cards/charts a user may
+    # have created themselves and tagged with module=FlowAgent Core.
+    shipped_labels: dict[str, set[str]] = {
+        "Number Card": set(),
+        "Dashboard Chart": set(),
+    }
+    for subdir, doctype, label_field in (
+        ("number_card",     "Number Card",     "label"),
+        ("dashboard_chart", "Dashboard Chart", "chart_name"),
+    ):
+        pattern = os.path.join(
+            app_path, "flowagent_core", subdir, "*", "*.json",
+        )
+        for path in sorted(glob.glob(pattern)):
+            try:
+                with open(path) as f:
+                    s = _json.load(f)
+                lbl = s.get(label_field)
+                if lbl:
+                    shipped_labels[doctype].add(lbl)
+            except Exception:
+                pass
+
+    for doctype, expected in expected_names.items():
+        try:
+            existing = frappe.get_all(
+                doctype,
+                filters={"module": "FlowAgent Core"},
+                pluck="name",
+            )
+        except Exception:
+            existing = []
+        for name in existing:
+            if name in expected:
+                continue
+            # Only delete if the record's name matches one of the labels
+            # we shipped — that's the signature of a record auto-named
+            # from a label by the v0.3.4/v0.3.5 bug.
+            if name not in shipped_labels[doctype]:
+                continue
+            try:
+                frappe.delete_doc(
+                    doctype, name,
+                    ignore_permissions=True, force=True,
+                )
+            except Exception as e:
+                frappe.log_error(
+                    title=f"FlowAgent: orphan cleanup failed for {doctype} {name}",
                     message=f"{type(e).__name__}: {e}",
                 )
 
 
-def _explicit_upsert(doctype: str, name: str, spec: dict):
-    """Create or update a Number Card / Dashboard Chart record by hand
-    using the spec dict. Used as a fallback when Frappe's normal import
-    path doesn't produce the record with the expected name.
+def _upsert_with_explicit_name(doctype: str, name: str, spec: dict):
+    """Create or update a record, preserving the explicit name even
+    when the doctype's autoname rule would override it.
+
+    The critical flag is `doc.flags.name_set = True`, which Frappe's
+    naming logic checks before running autoname. Without it, the
+    `field:label` autoname on Number Card overwrites our explicit name.
     """
     SKIP = {"doctype", "creation", "modified", "modified_by", "owner",
-            "idx", "docstatus"}
+            "idx", "docstatus", "name"}
 
     is_new = not frappe.db.exists(doctype, name)
     if is_new:
         doc = frappe.new_doc(doctype)
-        # Set name explicitly; defeats the `field:label` autoname rule
-        # on Number Card when the explicit name needs to be preserved.
-        doc.name = name
         doc.flags.name_set = True
+        doc.name = name
     else:
         doc = frappe.get_doc(doctype, name)
 
@@ -145,9 +191,7 @@ def _explicit_upsert(doctype: str, name: str, spec: dict):
         try:
             doc.set(k, v)
         except Exception:
-            # Field doesn't exist on this doctype version — skip silently.
-            # Better to have a working card with one missing optional field
-            # than to fail import entirely.
+            # Field doesn't exist on this Frappe version — skip silently.
             pass
 
     doc.flags.ignore_permissions = True
@@ -158,11 +202,12 @@ def _explicit_upsert(doctype: str, name: str, spec: dict):
         else:
             doc.save()
     except frappe.DuplicateEntryError:
-        # Race or rename collision — record is already there, move on
+        # Already exists despite our existence check — race or rename
+        # collision. Move on.
         pass
     except Exception as e:
         frappe.log_error(
-            title=f"FlowAgent: _explicit_upsert failed for {doctype} {name}",
+            title=f"FlowAgent: upsert failed for {doctype} {name}",
             message=f"{type(e).__name__}: {e}",
         )
 
