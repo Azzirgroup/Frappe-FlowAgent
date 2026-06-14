@@ -6,6 +6,7 @@ Logic nodes: condition, wait, loop, parallel.
 
 from __future__ import annotations
 
+import json
 import time
 
 import frappe
@@ -203,3 +204,275 @@ def _num(x):
 def _replace_word(s: str, word: str, replacement: str) -> str:
     import re
     return re.sub(rf"\b{re.escape(word)}\b", replacement, s)
+
+
+# ---------------------------------------------------------------------------
+# Sub-workflow node
+# ---------------------------------------------------------------------------
+@node("logic_subworkflow")
+class SubWorkflowNode(BaseExecutor):
+    """Synchronously invoke another FlowAgent workflow.
+
+    cfg:
+      target_workflow  — the name of the FlowAgent Workflow to invoke
+      payload          — optional JSON string defining the payload passed
+                         to the child. Defaults to the current context
+                         serialised as JSON. Templated via Jinja before
+                         being parsed.
+      output           — variable name to bind the child's final context
+                         under in the parent's context (default: 'result')
+
+    Output: a dict with {child_run, child_context} that the parent can
+    branch on.
+
+    Guards:
+      - Max nesting depth of 5 (configurable in FlowAgent Settings later).
+        Each child run inherits a `_subworkflow_depth` marker bumped by 1.
+      - Won't call a disabled workflow unless we're in dry-run.
+    """
+
+    MAX_DEPTH = 5
+
+    def run(self, *, node, cfg, context, runner):
+        from ..runner import Runner, PAUSE
+
+        target = (cfg.get("target_workflow") or "").strip()
+        if not target:
+            frappe.throw("logic_subworkflow: target_workflow is required")
+
+        # Cycle / depth guard. We piggyback on the context — the seed
+        # passed to each child Runner carries the depth marker forward.
+        depth = int(context.data.get("_subworkflow_depth") or 0) + 1
+        if depth > self.MAX_DEPTH:
+            frappe.throw(
+                f"logic_subworkflow: max nesting depth ({self.MAX_DEPTH}) "
+                f"exceeded — refusing to call '{target}' to prevent runaway "
+                "recursion."
+            )
+
+        # Build the payload. Default: pass the parent's context whole.
+        payload: dict
+        raw_payload = cfg.get("payload")
+        if raw_payload:
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+                if not isinstance(payload, dict):
+                    payload = {"value": payload}
+            except Exception as e:
+                frappe.throw(
+                    f"logic_subworkflow: payload is not valid JSON ({e}). "
+                    "Tip: use the | tojson Jinja filter when interpolating "
+                    "dicts into the payload field."
+                )
+        else:
+            # Pass a snapshot of the parent context. Exclude internal markers.
+            payload = {
+                k: v for k, v in context.data.items()
+                if not str(k).startswith("$") and not str(k).startswith("_")
+            }
+        # Carry the depth + provenance markers forward
+        payload["_subworkflow_depth"] = depth
+        payload["_parent_run"] = runner.run_doc.name if runner.run_doc else None
+        payload["_parent_workflow"] = runner.workflow_name
+
+        # Dry-run path: don't actually invoke; return a stub so the
+        # parent can preview the call.
+        if runner.dry_run:
+            return {
+                "_dry_run": True,
+                "would_invoke_workflow": target,
+                "would_send_payload": payload,
+            }
+
+        # Sync invocation. We adopt no existing run — a fresh one is
+        # created. The child runner is fully independent (own steps,
+        # own AI metrics, own retries) and links back via parent_run.
+        child = Runner(
+            workflow_name=target,
+            trigger_source=f"subworkflow:{runner.workflow_name}",
+            payload=payload,
+            user=runner.user,
+            dry_run=False,
+        )
+        child_run_name = child.execute()
+
+        # Fetch the child's final state so we can return useful info.
+        child_doc = frappe.get_doc("FlowAgent Workflow Run", child_run_name)
+        # Set parent_run on the child so the parent/child relationship is
+        # discoverable from either direction.
+        if child_doc.parent_run != (runner.run_doc.name if runner.run_doc else None):
+            frappe.db.set_value(
+                "FlowAgent Workflow Run", child_run_name,
+                "parent_run", runner.run_doc.name if runner.run_doc else None,
+                update_modified=False,
+            )
+
+        # If the child failed, fail the parent step too. The parent
+        # workflow's on_error policy decides whether the whole run
+        # halts or continues.
+        if child_doc.status not in ("Success", "Waiting"):
+            err = (child_doc.error_message or "child workflow failed")[:500]
+            frappe.throw(
+                f"logic_subworkflow: child '{target}' "
+                f"({child_run_name}) ended with status {child_doc.status}. "
+                f"Error: {err}"
+            )
+
+        # Parse the child's final context to return it to the parent
+        try:
+            child_ctx = json.loads(child_doc.final_context or "{}")
+        except Exception:
+            child_ctx = {}
+
+        return {
+            "child_run": child_run_name,
+            "child_status": child_doc.status,
+            "child_duration_ms": child_doc.duration_ms,
+            "context": child_ctx,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Approval node (human-in-the-loop)
+# ---------------------------------------------------------------------------
+@node("logic_approval")
+class ApprovalNode(BaseExecutor):
+    """Pause the run, send an approval request, wait for a decision.
+
+    cfg:
+      approvers         — comma-separated email addresses to notify
+      subject           — email subject (Jinja-templated)
+      message           — email body (Jinja-templated, supports HTML)
+      timeout_hours     — auto-decide after this many hours (default 24)
+      on_timeout        — 'approve' | 'reject' | 'fail' (default 'reject')
+
+    Outputs are port-specific:
+      out-approve — taken when the approver clicks Approve
+      out-reject  — taken when the approver clicks Reject (or on timeout
+                    if on_timeout='reject', which is the default)
+
+    Persistence:
+      The node writes waiting_at_node, waiting_token, waiting_expires_at,
+      and waiting_decision_port onto the run doc, then returns PAUSE so
+      the runner exits with status=Waiting. The flowagent.api.approval
+      endpoint receives the callback and calls
+      flowagent.engine.resume_run(run_name, decision) to continue.
+    """
+
+    def run(self, *, node, cfg, context, runner):
+        from ..runner import PAUSE
+        import secrets
+
+        if runner.dry_run:
+            # In dry-run we don't actually pause — we'd never resume.
+            # Pretend we got an approval and continue.
+            return ("out-approve", {"_dry_run": True, "decision": "approve"})
+
+        approvers_raw = (cfg.get("approvers") or "").strip()
+        if not approvers_raw:
+            frappe.throw("logic_approval: at least one approver email is required")
+        approvers = [a.strip() for a in approvers_raw.split(",") if a.strip()]
+
+        try:
+            timeout_hours = float(cfg.get("timeout_hours") or 24)
+        except (TypeError, ValueError):
+            timeout_hours = 24.0
+        timeout_hours = max(0.05, min(timeout_hours, 24 * 30))  # 3 min .. 30d
+
+        # Generate a non-guessable token. Stored on the run; the resume
+        # endpoint matches it to identify which run to resume.
+        token = secrets.token_urlsafe(32)
+
+        # Persist waiting state on the run doc. This must happen BEFORE
+        # we send the email — otherwise an approver clicking the link
+        # immediately could race with our save and not find the token.
+        run = runner.run_doc
+        run.status = "Waiting"
+        run.waiting_at_node = runner.current_node_id
+        run.waiting_token = token
+        run.waiting_expires_at = frappe.utils.add_to_date(
+            frappe.utils.now_datetime(), hours=timeout_hours
+        )
+        # Persist the current context too, so resume can restore it.
+        run.final_context = json.dumps(context.snapshot(), default=str)[:140000]
+        run.flags.ignore_permissions = True
+        run.save(ignore_permissions=True)
+        frappe.db.commit()
+
+        # Build callback URLs. We use frappe.utils.get_url so it works
+        # behind reverse proxies / custom domains.
+        site_url = frappe.utils.get_url()
+        approve_url = (
+            f"{site_url}/api/method/flowagent.api.approval.decide"
+            f"?token={token}&decision=approve"
+        )
+        reject_url = (
+            f"{site_url}/api/method/flowagent.api.approval.decide"
+            f"?token={token}&decision=reject"
+        )
+
+        # Subject + body, both Jinja-rendered against the current context
+        from ..context import render as _render
+        try:
+            subject = _render(
+                cfg.get("subject") or f"Approval needed: {runner.workflow_name}",
+                context.data,
+            )
+        except Exception:
+            subject = f"Approval needed: {runner.workflow_name}"
+
+        try:
+            user_message = _render(
+                cfg.get("message") or "Please review and approve.",
+                context.data,
+            )
+        except Exception:
+            user_message = "Please review and approve."
+
+        # Compose the HTML email. Inline-styled buttons so it renders
+        # consistently across mail clients.
+        run_url = f"{site_url}/app/flowagent-workflow-run/{run.name}"
+        html = f"""
+            <div style="font-family:-apple-system,Segoe UI,sans-serif;max-width:600px;
+                        margin:0 auto;padding:24px;color:#1f2937">
+              <h2 style="margin:0 0 16px 0;color:#1f2937">Approval requested</h2>
+              <p style="margin:0 0 24px 0;white-space:pre-wrap">{frappe.utils.escape_html(user_message)}</p>
+              <p style="margin:0 0 24px 0">
+                <a href="{approve_url}"
+                   style="display:inline-block;padding:12px 24px;background:#10B981;
+                          color:white;text-decoration:none;border-radius:6px;
+                          font-weight:600;margin-right:12px">Approve</a>
+                <a href="{reject_url}"
+                   style="display:inline-block;padding:12px 24px;background:#EF4444;
+                          color:white;text-decoration:none;border-radius:6px;
+                          font-weight:600">Reject</a>
+              </p>
+              <p style="margin:24px 0 0 0;font-size:12px;color:#6b7280">
+                Workflow: <a href="{run_url}" style="color:#6b7280">
+                  {frappe.utils.escape_html(runner.workflow_name)} / {run.name}
+                </a><br>
+                Expires {timeout_hours:g}h from now.
+              </p>
+            </div>
+        """
+
+        try:
+            frappe.sendmail(
+                recipients=approvers,
+                subject=subject,
+                message=html,
+                delayed=False,
+            )
+        except Exception as e:
+            # If email failed, undo the Waiting state so the run fails
+            # cleanly rather than getting stuck forever.
+            run.status = "Failed"
+            run.waiting_token = None
+            run.save(ignore_permissions=True)
+            frappe.throw(
+                f"logic_approval: failed to send approval email: {e}"
+            )
+
+        # Returning PAUSE signals the runner to exit cleanly. The next
+        # action on this run comes from flowagent.api.approval.decide.
+        return PAUSE

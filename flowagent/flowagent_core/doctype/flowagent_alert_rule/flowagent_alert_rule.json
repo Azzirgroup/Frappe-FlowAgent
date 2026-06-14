@@ -1,0 +1,172 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:rule_name",
+ "creation": "2026-06-06 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "rule_name",
+  "enabled",
+  "column_break_1",
+  "workflow",
+  "section_break_condition",
+  "trigger_condition",
+  "threshold_count",
+  "column_break_2",
+  "threshold_window_minutes",
+  "cooldown_minutes",
+  "section_break_channel",
+  "channel",
+  "channel_target",
+  "section_break_message",
+  "message_template",
+  "section_break_state",
+  "last_fired"
+ ],
+ "fields": [
+  {
+   "fieldname": "rule_name",
+   "fieldtype": "Data",
+   "label": "Rule Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Leave blank to apply to all workflows",
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "options": "FlowAgent Workflow"
+  },
+  {
+   "fieldname": "section_break_condition",
+   "fieldtype": "Section Break",
+   "label": "When to Fire"
+  },
+  {
+   "default": "On Failure",
+   "fieldname": "trigger_condition",
+   "fieldtype": "Select",
+   "label": "Trigger Condition",
+   "options": "On Failure\nOn Timeout\nThreshold",
+   "reqd": 1
+  },
+  {
+   "default": "3",
+   "depends_on": "eval:doc.trigger_condition === 'Threshold'",
+   "description": "Number of failures to trigger the alert",
+   "fieldname": "threshold_count",
+   "fieldtype": "Int",
+   "label": "Threshold Count"
+  },
+  {
+   "fieldname": "column_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "10",
+   "depends_on": "eval:doc.trigger_condition === 'Threshold'",
+   "description": "Window in minutes to count failures",
+   "fieldname": "threshold_window_minutes",
+   "fieldtype": "Int",
+   "label": "Threshold Window (minutes)"
+  },
+  {
+   "default": "15",
+   "description": "Minimum minutes between alert firings to prevent flooding",
+   "fieldname": "cooldown_minutes",
+   "fieldtype": "Int",
+   "label": "Cooldown (minutes)"
+  },
+  {
+   "fieldname": "section_break_channel",
+   "fieldtype": "Section Break",
+   "label": "Where to Send"
+  },
+  {
+   "default": "Email",
+   "fieldname": "channel",
+   "fieldtype": "Select",
+   "label": "Channel",
+   "options": "Email\nSlack Webhook\nHTTP Webhook",
+   "reqd": 1
+  },
+  {
+   "description": "Email address(es) separated by commas, Slack webhook URL, or HTTP endpoint",
+   "fieldname": "channel_target",
+   "fieldtype": "Small Text",
+   "label": "Channel Target",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_message",
+   "fieldtype": "Section Break",
+   "label": "Message"
+  },
+  {
+   "description": "Optional Jinja template. Available: {{ run }}, {{ workflow }}, {{ status }}, {{ error }}, {{ count }} (threshold mode). Default message used if blank.",
+   "fieldname": "message_template",
+   "fieldtype": "Small Text",
+   "label": "Custom Message Template"
+  },
+  {
+   "fieldname": "section_break_state",
+   "fieldtype": "Section Break",
+   "label": "State"
+  },
+  {
+   "fieldname": "last_fired",
+   "fieldtype": "Datetime",
+   "label": "Last Fired",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-06 12:00:00",
+ "modified_by": "Administrator",
+ "module": "FlowAgent Core",
+ "name": "FlowAgent Alert Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "FlowAgent Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

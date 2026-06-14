@@ -21,7 +21,14 @@
   "final_context",
   "error_message",
   "section_steps",
-  "steps"
+  "steps",
+  "section_advanced",
+  "parent_run",
+  "waiting_at_node",
+  "waiting_decision_port",
+  "column_break_advanced",
+  "waiting_token",
+  "waiting_expires_at"
  ],
  "fields": [
   {
@@ -41,7 +48,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Queued\nRunning\nSuccess\nFailed\nCancelled\nTimeout",
+   "options": "Queued\nRunning\nWaiting\nSuccess\nFailed\nCancelled\nTimeout",
    "search_index": 1
   },
   {
@@ -126,6 +133,53 @@
    "fieldtype": "Table",
    "label": "Steps",
    "options": "FlowAgent Workflow Run Step"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_advanced",
+   "fieldtype": "Section Break",
+   "label": "Advanced"
+  },
+  {
+   "description": "Set when this run was spawned by a logic_subworkflow node in another run",
+   "fieldname": "parent_run",
+   "fieldtype": "Link",
+   "label": "Parent Run",
+   "options": "FlowAgent Workflow Run",
+   "read_only": 1
+  },
+  {
+   "description": "Node ID where the run is paused awaiting approval",
+   "fieldname": "waiting_at_node",
+   "fieldtype": "Data",
+   "label": "Waiting At Node",
+   "read_only": 1
+  },
+  {
+   "description": "Which output port the resume should take (out-approve / out-reject)",
+   "fieldname": "waiting_decision_port",
+   "fieldtype": "Data",
+   "label": "Resume Port",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_advanced",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Unique signed token for the approval callback URL",
+   "fieldname": "waiting_token",
+   "fieldtype": "Data",
+   "label": "Approval Token",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Approval times out if no decision arrives by this time",
+   "fieldname": "waiting_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Approval Expires At",
+   "read_only": 1
   }
  ],
  "in_create": 0,

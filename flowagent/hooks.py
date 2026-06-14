@@ -22,6 +22,14 @@ app_include_js = "/assets/flowagent/js/flowagent.js"
 after_install = "flowagent.install.after_install"
 after_migrate = "flowagent.install.after_migrate"
 
+# Website routes
+# ----------------------------------------------------------------------
+# Public-facing hosted forms. /f/<slug> resolves to www/flowagent_form.html
+# which renders the FlowAgent Form with matching slug.
+website_route_rules = [
+    {"from_route": "/f/<slug>", "to_route": "flowagent_form"},
+]
+
 # DocType Events
 # ----------------------------------------------------------------------
 # The wildcard listener catches every DocType save/submit/cancel and
@@ -46,7 +54,12 @@ scheduler_events = {
         # Every minute — the scheduler tick that evaluates cron triggers.
         "* * * * *": [
             "flowagent.triggers.schedule_dispatcher.tick"
-        ]
+        ],
+        # Every 5 minutes — sweep for paused-too-long approval runs and
+        # apply their configured timeout policy.
+        "*/5 * * * *": [
+            "flowagent.tasks.expire_waiting_runs"
+        ],
     },
     "hourly": [
         # Housekeeping: trim Workflow Run history older than retention

@@ -44,6 +44,13 @@ const NODE_DEFS = {
         label: 'Manual', icon: 'ti-hand-click', color: '#EEEDFE', iconColor: '#F59E0B',
         category: 'trigger', fields: [],
     },
+    trigger_form: {
+        label: 'Form Submission', icon: 'ti-forms', color: '#EEEDFE', iconColor: '#F59E0B',
+        category: 'trigger', fields: [
+            { k: 'form_slug', l: 'Form slug (informational)', t: 'text', v: '',
+              help: 'The actual binding lives on the FlowAgent Form record. Set its workflow to this one.' },
+        ],
+    },
 
     // ----- AI -----
     ai_llm: {
@@ -126,6 +133,26 @@ const NODE_DEFS = {
     logic_parallel: {
         label: 'Parallel', icon: 'ti-arrows-split', color: '#FAEEDA', iconColor: '#FB923C',
         category: 'logic', fields: [],
+    },
+    logic_subworkflow: {
+        label: 'Sub-workflow', icon: 'ti-stack-2', color: '#FAEEDA', iconColor: '#FB923C',
+        category: 'logic', fields: [
+            { k: 'target_workflow', l: 'Target workflow', t: 'link', options: 'FlowAgent Workflow', v: '' },
+            { k: 'payload', l: 'Payload (JSON, optional)', t: 'textarea', v: '',
+              help: 'Optional override. If blank, the full parent context is forwarded. Use |tojson when injecting Jinja into JSON.' },
+            { k: 'output', l: 'Output variable', t: 'text', v: 'subflow' },
+        ],
+    },
+    logic_approval: {
+        label: 'Approval', icon: 'ti-user-check', color: '#FAEEDA', iconColor: '#FB923C',
+        category: 'logic', hasBranch: true, branchPorts: ['out-approve', 'out-reject'], fields: [
+            { k: 'approvers', l: 'Approvers (emails, comma-separated)', t: 'text', v: '' },
+            { k: 'subject', l: 'Email subject', t: 'text', v: 'Approval needed: {{ workflow_name }}' },
+            { k: 'message', l: 'Email body (HTML or plain)', t: 'textarea',
+              v: 'Please review and approve the following:\n\n{{ trigger.doc | tojson }}' },
+            { k: 'timeout_hours', l: 'Timeout (hours)', t: 'text', v: '24' },
+            { k: 'on_timeout', l: 'On timeout', t: 'select', opts: ['reject', 'approve', 'fail'], v: 'reject' },
+        ],
     },
 
     // ----- frappe -----
@@ -258,9 +285,9 @@ const NODE_DEFS = {
 };
 
 const SIDEBAR_GROUPS = [
-    { label: 'Triggers',         types: ['trigger_doctype', 'trigger_webhook', 'trigger_schedule', 'trigger_manual'] },
+    { label: 'Triggers',         types: ['trigger_doctype', 'trigger_webhook', 'trigger_schedule', 'trigger_manual', 'trigger_form'] },
     { label: 'AI Agents',        types: ['ai_llm', 'ai_extract', 'ai_classify', 'ai_sentiment', 'ai_agent', 'ai_vision'] },
-    { label: 'Logic',            types: ['logic_condition', 'logic_loop', 'logic_wait', 'logic_parallel'] },
+    { label: 'Logic',            types: ['logic_condition', 'logic_loop', 'logic_wait', 'logic_parallel', 'logic_subworkflow', 'logic_approval'] },
     { label: 'Frappe Actions',   types: ['frappe_create', 'frappe_update', 'frappe_fetch', 'frappe_submit', 'frappe_script'] },
     { label: 'Integrations',     types: ['int_email', 'int_whatsapp', 'int_http', 'int_slack', 'int_sheets', 'int_razorpay'] },
     { label: 'Transform',        types: ['tf_mapper', 'tf_jinja', 'tf_code'] },
@@ -2279,6 +2306,11 @@ function renderNode(n) {
     const preview = nodePreviewText(n);
     const isTrigger = (n.type || '').startsWith('trigger_');
     const branch = def.hasBranch;
+    // Branched nodes default to out-yes / out-no for conditions. Other
+    // branched nodes (e.g. logic_approval) declare a `branchPorts` pair
+    // and we render their labels accordingly.
+    const branchPorts = (def.branchPorts && def.branchPorts.length === 2) ? def.branchPorts : ['out-yes', 'out-no'];
+    const branchLabels = (def.branchPorts && def.branchPorts[0] === 'out-approve') ? ['✓', '✗'] : ['Y', 'N'];
 
     el.innerHTML = `
         <div class="fa-node-head" style="color:${def.iconColor}">
@@ -2291,10 +2323,10 @@ function renderNode(n) {
         <div class="fa-node-body">${preview}</div>
         ${!isTrigger ? `<div class="fa-port fa-port-in" data-node="${n.id}" data-port="in"></div>` : ''}
         ${branch
-            ? `<div class="fa-port fa-port-yes" data-node="${n.id}" data-port="out-yes"></div>
-               <div class="fa-port fa-port-no"  data-node="${n.id}" data-port="out-no"></div>
-               <span class="fa-port-label fa-port-label-yes">Y</span>
-               <span class="fa-port-label fa-port-label-no">N</span>`
+            ? `<div class="fa-port fa-port-yes" data-node="${n.id}" data-port="${branchPorts[0]}"></div>
+               <div class="fa-port fa-port-no"  data-node="${n.id}" data-port="${branchPorts[1]}"></div>
+               <span class="fa-port-label fa-port-label-yes">${branchLabels[0]}</span>
+               <span class="fa-port-label fa-port-label-no">${branchLabels[1]}</span>`
             : `<div class="fa-port fa-port-out" data-node="${n.id}" data-port="out"></div>`}
     `;
 
@@ -2603,10 +2635,13 @@ function updateRunAnimations() {
 function portXY(node, port) {
     // Node is 184px wide, head ~46px + body ~36px ≈ 88px total.
     const W = 184, H = 88;
-    if (port === 'in')      return { x: node.x,       y: node.y + H / 2 };
-    if (port === 'out')     return { x: node.x + W,   y: node.y + H / 2 };
-    if (port === 'out-yes') return { x: node.x + W,   y: node.y + H * 0.36 };
-    if (port === 'out-no')  return { x: node.x + W,   y: node.y + H * 0.64 };
+    if (port === 'in')          return { x: node.x,       y: node.y + H / 2 };
+    if (port === 'out')         return { x: node.x + W,   y: node.y + H / 2 };
+    if (port === 'out-yes')     return { x: node.x + W,   y: node.y + H * 0.36 };
+    if (port === 'out-no')      return { x: node.x + W,   y: node.y + H * 0.64 };
+    // logic_approval uses the same two positions but with semantic names
+    if (port === 'out-approve') return { x: node.x + W,   y: node.y + H * 0.36 };
+    if (port === 'out-reject')  return { x: node.x + W,   y: node.y + H * 0.64 };
     return { x: node.x + W, y: node.y + H / 2 };
 }
 
@@ -3259,7 +3294,10 @@ function loadTemplate(key) {
         for (let i = 0; i < state.nodes.length - 1; i++) {
             const from = state.nodes[i], to = state.nodes[i + 1];
             if (from.def && from.def.hasBranch) {
-                state.edges.push({ from: from.id, to: to.id, fromPort: 'out-yes' });
+                // Use the node's declared first branch port (out-yes by default,
+                // out-approve for logic_approval, etc.)
+                const defaultPort = (from.def.branchPorts && from.def.branchPorts[0]) || 'out-yes';
+                state.edges.push({ from: from.id, to: to.id, fromPort: defaultPort });
             } else {
                 state.edges.push({ from: from.id, to: to.id });
             }

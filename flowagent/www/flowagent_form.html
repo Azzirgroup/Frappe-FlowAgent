@@ -1,0 +1,234 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block head_include %}
+<style>
+  /* Reset Frappe's default web template chrome */
+  body { background: #F9FAFB; }
+  .web-page-container { max-width: none; padding: 0; }
+
+  .fa-form-wrap {
+    max-width: 560px; margin: 64px auto; padding: 40px;
+    background: white; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1F2937;
+  }
+  .fa-form-wrap h1 {
+    margin: 0 0 8px 0; font-size: 26px; font-weight: 700; color: #111827;
+  }
+  .fa-form-wrap .fa-form-desc {
+    margin: 0 0 28px 0; color: #6B7280; line-height: 1.5; font-size: 15px;
+  }
+  .fa-form-field { margin-bottom: 20px; }
+  .fa-form-field label {
+    display: block; margin-bottom: 6px;
+    font-size: 13.5px; font-weight: 500; color: #374151;
+  }
+  .fa-form-field label .fa-req { color: #EF4444; margin-left: 2px; }
+  .fa-form-field input[type="text"],
+  .fa-form-field input[type="email"],
+  .fa-form-field input[type="number"],
+  .fa-form-field input[type="tel"],
+  .fa-form-field input[type="url"],
+  .fa-form-field input[type="date"],
+  .fa-form-field select,
+  .fa-form-field textarea {
+    width: 100%; padding: 10px 12px;
+    border: 1px solid #D1D5DB; border-radius: 8px;
+    font-size: 14px; font-family: inherit; color: #1F2937;
+    background: white; box-sizing: border-box;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .fa-form-field input:focus,
+  .fa-form-field select:focus,
+  .fa-form-field textarea:focus {
+    outline: none; border-color: #6366F1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  }
+  .fa-form-field textarea { resize: vertical; min-height: 80px; }
+  .fa-form-field.fa-checkbox label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; font-weight: 400; cursor: pointer;
+  }
+  .fa-form-field.fa-checkbox input { width: auto; margin: 0; }
+  .fa-form-field .fa-field-error {
+    margin-top: 6px; font-size: 12px; color: #B91C1C;
+  }
+  .fa-form-submit {
+    background: #6366F1; color: white; border: none;
+    padding: 12px 24px; border-radius: 8px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
+    transition: background .12s, transform .05s;
+    width: 100%;
+  }
+  .fa-form-submit:hover:not(:disabled) { background: #4F46E5; }
+  .fa-form-submit:active:not(:disabled) { transform: translateY(1px); }
+  .fa-form-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .fa-form-error {
+    margin-top: 16px; padding: 12px 16px; border-radius: 8px;
+    background: #FEE2E2; color: #991B1B; font-size: 14px;
+    display: none;
+  }
+  .fa-form-success {
+    text-align: center; padding: 40px 20px;
+    display: none;
+  }
+  .fa-form-success svg {
+    margin-bottom: 16px;
+  }
+  .fa-form-success h2 {
+    margin: 0 0 8px 0; font-size: 22px; color: #047857;
+  }
+  .fa-form-success p { margin: 0; color: #6B7280; line-height: 1.5; }
+</style>
+{% endblock %}
+
+{% block page_content %}
+<div class="fa-form-wrap">
+  {% if form.title %}<h1>{{ form.title }}</h1>{% else %}<h1>{{ form.form_name }}</h1>{% endif %}
+  {% if form.description %}<p class="fa-form-desc">{{ form.description }}</p>{% endif %}
+
+  <form id="fa-form" data-slug="{{ form.slug }}" data-submit-url="{{ submit_url }}">
+    {% for field in schema %}
+      {% set req = "required" if field.get("required") else "" %}
+      {% set fname = field.get("name") %}
+      {% set ftype = field.get("type", "text") %}
+      <div class="fa-form-field {% if ftype == 'checkbox' %}fa-checkbox{% endif %}"
+           data-field="{{ fname }}">
+
+        {% if ftype == "checkbox" %}
+          <label>
+            <input type="checkbox" name="{{ fname }}" {{ req }}>
+            <span>{{ field.get("label") }}{% if field.get("required") %} <span class="fa-req">*</span>{% endif %}</span>
+          </label>
+
+        {% elif ftype == "textarea" %}
+          <label>{{ field.get("label") }}{% if field.get("required") %} <span class="fa-req">*</span>{% endif %}</label>
+          <textarea name="{{ fname }}"
+                    rows="{{ field.get('rows', 4) }}"
+                    placeholder="{{ field.get('placeholder', '') }}"
+                    {{ req }}></textarea>
+
+        {% elif ftype == "select" %}
+          <label>{{ field.get("label") }}{% if field.get("required") %} <span class="fa-req">*</span>{% endif %}</label>
+          <select name="{{ fname }}" {{ req }}>
+            <option value="">— Choose —</option>
+            {% for opt in field.get("options", []) %}
+              <option value="{{ opt }}">{{ opt }}</option>
+            {% endfor %}
+          </select>
+
+        {% else %}
+          {# text, email, number, date, tel, url #}
+          <label>{{ field.get("label") }}{% if field.get("required") %} <span class="fa-req">*</span>{% endif %}</label>
+          <input type="{{ ftype }}"
+                 name="{{ fname }}"
+                 placeholder="{{ field.get('placeholder', '') }}"
+                 {% if field.get('min') is not none %}min="{{ field.get('min') }}"{% endif %}
+                 {% if field.get('max') is not none %}max="{{ field.get('max') }}"{% endif %}
+                 {{ req }}>
+        {% endif %}
+
+        <div class="fa-field-error"></div>
+      </div>
+    {% endfor %}
+
+    <button type="submit" class="fa-form-submit">{{ form.submit_button_text or "Submit" }}</button>
+  </form>
+
+  <div class="fa-form-error" id="fa-form-error"></div>
+
+  <div class="fa-form-success" id="fa-form-success">
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="11" fill="#D1FAE5"/>
+      <path d="M7 12.5l3.5 3.5L17 9" stroke="#10B981" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+    <h2>Thanks!</h2>
+    <p id="fa-success-msg">{{ form.success_message or "Your submission was received." }}</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  const form = document.getElementById("fa-form");
+  if (!form) return;
+
+  const slug = form.dataset.slug;
+  const submitUrl = form.dataset.submitUrl;
+  const errBox = document.getElementById("fa-form-error");
+  const successBox = document.getElementById("fa-form-success");
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    // Clear previous errors
+    errBox.style.display = "none";
+    form.querySelectorAll(".fa-field-error").forEach(el => el.textContent = "");
+
+    // Build the payload from form fields
+    const fd = new FormData(form);
+    const payload = { slug: slug };
+    for (const [k, v] of fd.entries()) {
+      payload[k] = v;
+    }
+    // Unchecked checkboxes don't appear in FormData — add them explicitly
+    form.querySelectorAll("input[type=checkbox]").forEach(cb => {
+      if (!payload.hasOwnProperty(cb.name)) payload[cb.name] = false;
+    });
+
+    const btn = form.querySelector(".fa-form-submit");
+    const btnText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Submitting…";
+
+    try {
+      const resp = await fetch(submitUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Requested-With": "XMLHttpRequest",
+          "X-Frappe-CSRF-Token": window.csrf_token || "",
+        },
+        body: new URLSearchParams(payload).toString(),
+      });
+      const json = await resp.json();
+      // Frappe wraps responses as { message: <actual> } for whitelisted methods
+      const result = (json && json.message) || json || {};
+
+      if (result.ok) {
+        if (result.redirect) {
+          window.location.href = result.redirect;
+          return;
+        }
+        form.style.display = "none";
+        document.getElementById("fa-success-msg").textContent =
+          result.message || "Your submission was received.";
+        successBox.style.display = "block";
+      } else {
+        // Field-level errors take priority over the generic message
+        if (result.field_errors) {
+          for (const [fname, msg] of Object.entries(result.field_errors)) {
+            const wrap = form.querySelector(`.fa-form-field[data-field="${fname}"] .fa-field-error`);
+            if (wrap) wrap.textContent = msg;
+          }
+          errBox.textContent = "Please correct the highlighted fields.";
+        } else {
+          errBox.textContent = result.error || "Something went wrong.";
+        }
+        errBox.style.display = "block";
+      }
+    } catch (err) {
+      errBox.textContent = "Network error — please try again.";
+      errBox.style.display = "block";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = btnText;
+    }
+  });
+})();
+</script>
+{% endblock %}

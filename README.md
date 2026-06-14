@@ -64,6 +64,13 @@ It's the kind of tool you'd reach for n8n or Zapier for, except:
 - **Per-node retry config** — mark flaky integrations (HTTP, Sheets, AI) as retry-3 while keeping write nodes at retry-0; configurable backoff delay
 - **Webhook HMAC verification** — optional per-workflow signing secret validates `X-Signature-256` against HMAC-SHA256 of the raw body, matching GitHub/Razorpay/generic webhook conventions
 
+**Composable workflows**
+
+- **Sub-workflow node** (`logic_subworkflow`) — synchronously invoke another workflow as a step. Pass the parent context (default) or a custom JSON payload. Returns the child's final context to the parent. Cycle/depth guard caps recursion at 5 levels.
+- **Approval node** (`logic_approval`) — pause the run, email approvers with one-click Approve/Reject buttons, resume on the chosen branch (`out-approve` / `out-reject`). Run sits in `Waiting` status until decision arrives or timeout fires. Configurable timeout policy: approve, reject, or fail.
+- **Alert rules** — separate `FlowAgent Alert Rule` doctype declares notifications: "On Failure" / "On Timeout" / "Threshold (N failures in M minutes)". Per-rule cooldown prevents flooding. Channels: Email / Slack Webhook / HTTP Webhook. Custom Jinja message template per rule.
+- **Hosted forms** — `FlowAgent Form` doctype defines a JSON field schema, gets a public URL at `/f/<slug>`, server-rendered with client-side validation. Submissions create a Workflow Run with the form data as the payload. Per-IP rate limiting, configurable success message or redirect URL.
+
 **Workspace dashboard & reports**
 
 Install the app and the **FlowAgent** workspace shows up in the desk sidebar with:

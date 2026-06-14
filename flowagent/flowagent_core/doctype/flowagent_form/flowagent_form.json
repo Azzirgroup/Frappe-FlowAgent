@@ -1,0 +1,167 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:form_name",
+ "creation": "2026-06-06 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "form_name",
+  "enabled",
+  "column_break_1",
+  "slug",
+  "section_break_target",
+  "workflow",
+  "section_break_appearance",
+  "title",
+  "description",
+  "submit_button_text",
+  "section_break_schema",
+  "schema",
+  "section_break_after_submit",
+  "success_message",
+  "redirect_url",
+  "section_break_limits",
+  "rate_limit_per_hour"
+ ],
+ "fields": [
+  {
+   "fieldname": "form_name",
+   "fieldtype": "Data",
+   "label": "Form Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "URL-safe identifier. The form is published at /f/<slug>",
+   "fieldname": "slug",
+   "fieldtype": "Data",
+   "label": "URL Slug",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "section_break_target",
+   "fieldtype": "Section Break",
+   "label": "Target Workflow"
+  },
+  {
+   "description": "Submissions create a Workflow Run of this workflow with the form data as the payload.",
+   "fieldname": "workflow",
+   "fieldtype": "Link",
+   "label": "Workflow",
+   "options": "FlowAgent Workflow",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_appearance",
+   "fieldtype": "Section Break",
+   "label": "Appearance"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "label": "Form Title"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "default": "Submit",
+   "fieldname": "submit_button_text",
+   "fieldtype": "Data",
+   "label": "Submit Button Text"
+  },
+  {
+   "fieldname": "section_break_schema",
+   "fieldtype": "Section Break",
+   "label": "Field Schema"
+  },
+  {
+   "description": "JSON array of field definitions. Each entry needs: name, label, type. Optional: required, options (for select), placeholder, rows (for textarea), min/max (for number).\n\nExample: [{\"name\":\"email\",\"label\":\"Email\",\"type\":\"email\",\"required\":true}]\n\nSupported types: text, email, number, textarea, select, checkbox, date, tel, url",
+   "fieldname": "schema",
+   "fieldtype": "Code",
+   "label": "Schema",
+   "options": "JSON",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_after_submit",
+   "fieldtype": "Section Break",
+   "label": "After Submission"
+  },
+  {
+   "default": "Thanks — your submission was received.",
+   "fieldname": "success_message",
+   "fieldtype": "Small Text",
+   "label": "Success Message"
+  },
+  {
+   "description": "Optional. If set, browser redirects here after a successful submission. Use {{ run_name }} as a placeholder if you want the workflow run id in the URL.",
+   "fieldname": "redirect_url",
+   "fieldtype": "Data",
+   "label": "Redirect URL"
+  },
+  {
+   "fieldname": "section_break_limits",
+   "fieldtype": "Section Break",
+   "label": "Limits"
+  },
+  {
+   "default": "60",
+   "description": "Maximum submissions per hour per IP. 0 = no limit.",
+   "fieldname": "rate_limit_per_hour",
+   "fieldtype": "Int",
+   "label": "Rate Limit (per hour per IP)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-06-06 12:00:00",
+ "modified_by": "Administrator",
+ "module": "FlowAgent Core",
+ "name": "FlowAgent Form",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "FlowAgent Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
