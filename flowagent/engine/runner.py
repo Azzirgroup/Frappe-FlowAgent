@@ -38,6 +38,12 @@ from .nodes import get_executor
 # Sentinel: a node returning this skips its downstream branch entirely.
 SKIP = object()
 
+# Sentinel: a node returning this pauses the entire run. Used by the
+# logic_approval node — it saves the resume state on the run doc and
+# exits the runner cleanly so an external HTTP callback can resume it
+# later via flowagent.engine.resume_run(run_name, decision).
+PAUSE = object()
+
 
 class WorkflowRunError(Exception):
     """Raised when a node fails and the workflow's on_error == 'Stop'."""
@@ -93,6 +99,20 @@ class Runner:
         self.start_ts = None
         self.error_state: str | None = None
 
+        # Pause/resume state. _paused is set True when a node (currently
+        # only logic_approval) returns the PAUSE sentinel; the runner
+        # then exits cleanly without finalising as Success, leaving the
+        # run in status=Waiting for an external callback to resume.
+        # The _resume_* attributes are set by flowagent.engine.resume_run
+        # before run_sync to redirect the walk to the paused node's
+        # downstream rather than from the trigger.
+        self._paused = False
+        self._resume_from_node: str | None = None
+        self._resume_decision: str | None = None
+        # Tracks which node id is currently executing — read by the
+        # logic_approval node to know what to save as waiting_at_node.
+        self.current_node_id: str | None = None
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -119,32 +139,78 @@ class Runner:
             mark_doc_owned(self.workflow_name, trigger_doctype, trigger_name)
 
         try:
-            trigger_node = self._find_trigger_node()
-            if not trigger_node:
-                raise WorkflowRunError("", "Workflow has no trigger node")
-            # Build a context where templates can address the trigger data
-            # in three convenient ways:
-            #   {{trigger.doc.field}}    — explicit path through payload
-            #   {{trigger.field}}        — short alias when the trigger is a
-            #                              doctype event (doc fields lifted up)
-            #   {{doc.field}}, {{field}} — also lifted to the top level
-            doc = self.payload.get("doc") or {}
-            trigger_ns = dict(self.payload)  # {doc, doc_name, doctype, event, user, ...}
-            if isinstance(doc, dict):
-                # Lift doc fields under trigger.* without overwriting structural keys
-                for k, v in doc.items():
-                    trigger_ns.setdefault(k, v)
-            seed = {
-                "trigger": trigger_ns,
-                **self.payload,  # also flatten so {{doc_name}}, {{doc}}, etc. work
-            }
-            # Also expose top-level doc fields so {{customer_name}} works directly
-            if isinstance(doc, dict):
-                for k, v in doc.items():
-                    seed.setdefault(k, v)
-            self.context = Context(seed=seed)
-            self._walk(trigger_node["id"])
-            self._finalise("Success")
+            # Resume path: this run was previously paused (status=Waiting)
+            # and we're being re-invoked via flowagent.engine.resume_run.
+            # Start the walk from the saved approval node's downstream
+            # rather than from the trigger.
+            if getattr(self, "_resume_from_node", None):
+                # Restore the saved context from final_context (the
+                # approval node persisted it before pausing).
+                saved_ctx = {}
+                if self.run_doc.final_context:
+                    try:
+                        saved_ctx = json.loads(self.run_doc.final_context)
+                    except Exception:
+                        saved_ctx = {}
+                # Layer the decision into the context so downstream nodes
+                # can reference it via {{ approval.decision }}.
+                if self._resume_decision is not None:
+                    saved_ctx.setdefault("approval", {})
+                    saved_ctx["approval"]["decision"] = self._resume_decision
+                    saved_ctx["approval"]["decided_at"] = str(now_datetime())
+                self.context = Context(seed=saved_ctx)
+                # Walk from each successor of the paused node, filtered
+                # by the decision port.
+                port = "out-" + (self._resume_decision or "approve")
+                outgoing = self.outgoing.get(self._resume_from_node, [])
+                downstream_ids = [
+                    e["to"] for e in outgoing
+                    if (e.get("fromPort") or "out") == port
+                ]
+                # Fallback: if no port-specific edges, take all defaults
+                if not downstream_ids:
+                    downstream_ids = [
+                        e["to"] for e in outgoing
+                        if not e.get("fromPort") or (e.get("fromPort") == "out")
+                    ]
+                for nid in downstream_ids:
+                    if self.step_counter >= (self.settings.max_steps_per_run or 100):
+                        break
+                    if getattr(self, "_paused", False):
+                        break
+                    self._walk(nid)
+                if not getattr(self, "_paused", False):
+                    self._finalise("Success")
+            else:
+                trigger_node = self._find_trigger_node()
+                if not trigger_node:
+                    raise WorkflowRunError("", "Workflow has no trigger node")
+                # Build a context where templates can address the trigger data
+                # in three convenient ways:
+                #   {{trigger.doc.field}}    — explicit path through payload
+                #   {{trigger.field}}        — short alias when the trigger is a
+                #                              doctype event (doc fields lifted up)
+                #   {{doc.field}}, {{field}} — also lifted to the top level
+                doc = self.payload.get("doc") or {}
+                trigger_ns = dict(self.payload)  # {doc, doc_name, doctype, event, user, ...}
+                if isinstance(doc, dict):
+                    # Lift doc fields under trigger.* without overwriting structural keys
+                    for k, v in doc.items():
+                        trigger_ns.setdefault(k, v)
+                seed = {
+                    "trigger": trigger_ns,
+                    **self.payload,  # also flatten so {{doc_name}}, {{doc}}, etc. work
+                }
+                # Also expose top-level doc fields so {{customer_name}} works directly
+                if isinstance(doc, dict):
+                    for k, v in doc.items():
+                        seed.setdefault(k, v)
+                self.context = Context(seed=seed)
+                self._walk(trigger_node["id"])
+                # Only mark Success if we weren't paused. The pause path
+                # leaves the run in status=Waiting for an external resume.
+                if not getattr(self, "_paused", False):
+                    self._finalise("Success")
         except WorkflowRunError as e:
             self._finalise("Failed", error=e.message)
         except Exception as e:
@@ -161,7 +227,11 @@ class Runner:
     # ------------------------------------------------------------------
     def _load(self):
         self.wf = frappe.get_doc("FlowAgent Workflow", self.workflow_name)
-        if not self.wf.enabled and self.trigger_source != "manual":
+        # Allow manual runs and resume runs to bypass the disabled check
+        # — a run that paused for approval shouldn't fail just because
+        # the workflow was disabled while waiting for a human.
+        is_resume = self.trigger_source.startswith("resume:")
+        if not self.wf.enabled and self.trigger_source != "manual" and not is_resume:
             raise WorkflowRunError("", f"Workflow {self.workflow_name} is disabled")
         self.settings = frappe.get_single("FlowAgent Settings")
 
@@ -198,6 +268,12 @@ class Runner:
         max_steps = self.settings.max_steps_per_run or 100
 
         while queue:
+            # If a node paused the run (e.g. logic_approval awaiting a
+            # decision), stop walking. The run is in status=Waiting and
+            # will be resumed by an external callback.
+            if getattr(self, "_paused", False):
+                return
+
             if self.step_counter >= max_steps:
                 raise WorkflowRunError("", f"Workflow exceeded max_steps_per_run={max_steps}")
 
@@ -232,6 +308,9 @@ class Runner:
         node_type = node.get("type", "unknown")
         node_label = node.get("def", {}).get("label") or node.get("label") or node_type
         cfg = node.get("cfg", {})
+        # Expose the currently-executing node id to executors that need
+        # to capture it (logic_approval saves it as waiting_at_node).
+        self.current_node_id = node_id
 
         # Interpolate every config value through Jinja against current context.
         # Collect undefined-variable warnings so we can surface them in the
@@ -284,13 +363,25 @@ class Runner:
                     runner=self,
                 )
                 ms = int((time.monotonic() - step_start) * 1000)
-                # Result is either None (default out), a dict (default out with output),
-                # the SKIP sentinel, or a tuple (port, output_value).
+                # Result is one of: None (default out), a dict (default out
+                # with output), the SKIP sentinel, the PAUSE sentinel, or
+                # a tuple (port, output_value).
                 output_port = "out"
                 output_value = None
                 if result is SKIP:
                     output_port = None
                     output_value = "skipped"
+                elif result is PAUSE:
+                    # The approval node already saved waiting_* state on
+                    # the run doc. Record this step as Success with a
+                    # marker, then signal the walker to halt.
+                    self._record_step(step_index, node, "Success",
+                                     duration_ms=ms,
+                                     input_snapshot=rendered_cfg,
+                                     output_snapshot={"_paused": True},
+                                     error=("⚠ " + "; ".join(render_warnings)) if render_warnings else "")
+                    self._paused = True
+                    return None  # no port — walker should not continue
                 elif isinstance(result, tuple) and len(result) == 2:
                     output_port, output_value = result
                 else:
@@ -472,6 +563,20 @@ class Runner:
             update_modified=False,
         )
         frappe.db.commit()
+
+        # Fire any alert rules that match this run. Best-effort — wrapped
+        # in try/except inside alerts.py so a misconfigured rule (bad
+        # Slack URL, unreachable email server) never breaks the run that
+        # triggered it.
+        if status in ("Failed", "Timeout"):
+            try:
+                from flowagent.engine.alerts import check_and_fire_alerts
+                check_and_fire_alerts(self.run_doc)
+            except Exception as e:
+                frappe.log_error(
+                    title="FlowAgent: alert dispatch crashed",
+                    message=f"{type(e).__name__}: {e}",
+                )
 
 
 def _safe_json(value: Any) -> str:

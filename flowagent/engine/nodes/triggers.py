@@ -47,3 +47,25 @@ class ScheduleTrigger(BaseExecutor):
 class ManualTrigger(BaseExecutor):
     def run(self, *, node, cfg, context, runner):
         return {"user": runner.user, "payload": context.get("trigger")}
+
+
+@node("trigger_form")
+class FormTrigger(BaseExecutor):
+    """Entry point for runs spawned by a hosted FlowAgent Form submission.
+
+    The forms API (flowagent.api.forms.submit) creates a Workflow Run
+    with the submitted data as the payload — this node simply marks the
+    workflow's intent to be triggered by a form and surfaces the form
+    metadata to downstream nodes via context.
+
+    cfg.form_slug — informational only; the actual binding happens on
+    the FlowAgent Form record (which references the workflow).
+    """
+
+    def run(self, *, node, cfg, context, runner):
+        return {
+            "form_slug": cfg.get("form_slug") or context.get("form", {}).get("slug"),
+            "submission": context.get("doc") or {},
+            "submitted_at": context.get("form", {}).get("submitted_at"),
+            "ip": context.get("form", {}).get("ip"),
+        }
