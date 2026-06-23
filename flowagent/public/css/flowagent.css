@@ -2029,3 +2029,161 @@ body.fa-test-mode-active .fa-tb-btn.fa-run:hover {
     from { stroke-dashoffset: 0;   }
     to   { stroke-dashoffset: -18; }
 }
+
+/* =================================================================
+   Sidebar collapse
+   ================================================================= */
+.fa-sidebar {
+    transition: width 0.18s ease, padding 0.18s ease;
+}
+.fa-sidebar.fa-sidebar-collapsed {
+    width: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+}
+
+/* Toggle button pinned to the bottom of the sidebar */
+.fa-sidebar-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 10px 0;
+    border: none;
+    border-top: 1px solid var(--fa-border);
+    background: var(--fa-surface);
+    color: var(--fa-text-mute);
+    cursor: pointer;
+    font-size: 15px;
+    transition: color 0.12s, background 0.12s;
+    position: sticky;
+    bottom: 0;
+    flex-shrink: 0;
+}
+.fa-sidebar-toggle:hover { color: var(--fa-text); background: var(--fa-surface-2); }
+
+/* Slim re-open handle visible on the canvas left edge when sidebar is closed */
+.fa-sidebar-open-btn {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    width: 20px;
+    height: 56px;
+    background: var(--fa-surface);
+    border: 1px solid var(--fa-border);
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--fa-text-mute);
+    font-size: 13px;
+    box-shadow: 2px 0 8px rgba(0,0,0,0.06);
+    transition: color 0.12s, background 0.12s;
+}
+.fa-sidebar-open-btn:hover { color: var(--fa-text); background: var(--fa-surface-2); }
+.fa-sidebar-open-btn.fa-visible { display: flex; }
+
+/* =================================================================
+   Right panel collapse
+   ================================================================= */
+.fa-panel { transition: width 0.18s ease; }
+.fa-panel.fa-panel-collapsed {
+    width: 42px !important;
+    min-width: 42px !important;
+}
+.fa-panel.fa-panel-collapsed .fa-tabs,
+.fa-panel.fa-panel-collapsed .fa-panel-pane,
+.fa-panel.fa-panel-collapsed .fa-ai-pane,
+.fa-panel.fa-panel-collapsed .fa-runlog {
+    display: none !important;
+}
+
+/* Collapse toggle button in the tab row */
+.fa-panel-collapse-btn {
+    margin-left: auto;
+    padding: 6px 9px;
+    border: none;
+    background: transparent;
+    color: var(--fa-text-mute);
+    cursor: pointer;
+    font-size: 16px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: color 0.12s, background 0.12s;
+}
+.fa-panel-collapse-btn:hover { color: var(--fa-text); background: var(--fa-surface-2); }
+
+/* Vertical expand handle shown when the panel is fully collapsed */
+.fa-panel-expand-btn {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 100%;
+    cursor: pointer;
+    color: var(--fa-text-mute);
+    font-size: 16px;
+    transition: color 0.12s;
+    border: none;
+    background: transparent;
+}
+.fa-panel-expand-btn:hover { color: var(--fa-text); }
+.fa-panel-expand-btn i { transform: rotate(180deg); }
+.fa-panel-expand-label {
+    writing-mode: vertical-lr;
+    font-size: 10px;
+    font-family: var(--fa-font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-top: 10px;
+    color: var(--fa-text-mute);
+    pointer-events: none;
+}
+.fa-panel.fa-panel-collapsed .fa-panel-expand-btn { display: flex; }
+
+/* =================================================================
+   Topbar: responsive overflow + right-side grouping
+   ================================================================= */
+.fa-topbar {
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.fa-topbar::-webkit-scrollbar { display: none; }
+
+/* Right group: keeps Save / Test / Run from being split across the flex line */
+.fa-tb-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* ≤1300px — hide trigger pill (info is still in the tooltip) */
+@media (max-width: 1300px) {
+    #fa-trigger-indicator { display: none; }
+    #fa-wf-name { max-width: 180px; }
+}
+
+/* ≤1100px — drop "Test mode" text, keep checkbox; hide studio tag */
+@media (max-width: 1100px) {
+    .fa-test-toggle span { display: none; }
+    .fa-brand-tag { display: none; }
+    #fa-wf-name { max-width: 130px; }
+}
+
+/* ≤900px — collapse decorative separators, hide brand text */
+@media (max-width: 900px) {
+    .fa-tb-sep { display: none; }
+    .fa-brand > span:not(.fa-brand-mark) { display: none; }
+    #fa-wf-name { max-width: 90px; }
+}
+
+/* Canvas always keeps a usable minimum width */
+.fa-canvas-wrap { min-width: 200px; }

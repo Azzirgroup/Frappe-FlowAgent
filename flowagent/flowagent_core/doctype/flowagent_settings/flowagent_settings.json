@@ -5,10 +5,25 @@
  "engine": "InnoDB",
  "field_order": [
   "section_ai",
-  "anthropic_api_key",
+  "default_provider",
   "default_model",
   "column_break_ai",
   "max_agent_iterations",
+  "section_api_keys",
+  "anthropic_api_key",
+  "openai_api_key",
+  "column_break_keys",
+  "gemini_api_key",
+  "ollama_base_url",
+  "openrouter_api_key",
+  "section_whatsapp",
+  "whatsapp_provider",
+  "whatsapp_phone_id",
+  "whatsapp_access_token",
+  "column_break_wa",
+  "waclient_endpoint",
+  "waclient_session",
+  "waclient_api_key",
   "section_execution",
   "max_steps_per_run",
   "default_timeout_seconds",
@@ -27,14 +42,15 @@
    "label": "AI Provider"
   },
   {
-   "description": "Anthropic API key. Required for AI nodes and the AI Build feature. Stored encrypted.",
-   "fieldname": "anthropic_api_key",
-   "fieldtype": "Password",
-   "label": "Anthropic API Key"
+   "default": "Anthropic",
+   "description": "AI provider used by all AI nodes unless overridden on the node itself.",
+   "fieldname": "default_provider",
+   "fieldtype": "Select",
+   "label": "Default AI Provider",
+   "options": "Anthropic\nOpenAI\nGoogle Gemini\nOllama\nOpenRouter"
   },
   {
-   "default": "claude-sonnet-4-5",
-   "description": "Default Claude model used by AI nodes when none is specified on the node itself.",
+   "description": "Default model for the selected provider. Leave blank to use the provider's recommended default (claude-sonnet-4-5 / gpt-4o / gemini-1.5-pro / llama3.1).",
    "fieldname": "default_model",
    "fieldtype": "Data",
    "label": "Default Model"
@@ -49,6 +65,99 @@
    "fieldname": "max_agent_iterations",
    "fieldtype": "Int",
    "label": "Max Agent Iterations"
+  },
+  {
+   "fieldname": "section_api_keys",
+   "fieldtype": "Section Break",
+   "label": "API Keys"
+  },
+  {
+   "description": "Anthropic API key for Claude models (claude-sonnet-4-5, claude-opus-4, etc.). Stored encrypted.",
+   "fieldname": "anthropic_api_key",
+   "fieldtype": "Password",
+   "label": "Anthropic API Key"
+  },
+  {
+   "description": "OpenAI API key for GPT models (gpt-4o, gpt-4o-mini, etc.). Stored encrypted.",
+   "fieldname": "openai_api_key",
+   "fieldtype": "Password",
+   "label": "OpenAI API Key"
+  },
+  {
+   "fieldname": "column_break_keys",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Google Gemini API key for Gemini models (gemini-1.5-pro, gemini-1.5-flash, etc.). Stored encrypted.",
+   "fieldname": "gemini_api_key",
+   "fieldtype": "Password",
+   "label": "Google Gemini API Key"
+  },
+  {
+   "default": "http://localhost:11434",
+   "description": "Base URL of your local Ollama server. Used when provider is set to Ollama. No API key required.",
+   "fieldname": "ollama_base_url",
+   "fieldtype": "Data",
+   "label": "Ollama Base URL"
+  },
+  {
+   "description": "OpenRouter API key — gives access to 200+ models (Claude, GPT, Llama, Mistral, etc.) via a single key. Stored encrypted. Get yours at openrouter.ai.",
+   "fieldname": "openrouter_api_key",
+   "fieldtype": "Password",
+   "label": "OpenRouter API Key"
+  },
+  {
+   "fieldname": "section_whatsapp",
+   "fieldtype": "Section Break",
+   "label": "WhatsApp"
+  },
+  {
+   "default": "Meta Cloud API",
+   "description": "WhatsApp provider used by all WhatsApp nodes. Configure credentials for the chosen provider below.",
+   "fieldname": "whatsapp_provider",
+   "fieldtype": "Select",
+   "label": "WhatsApp Provider",
+   "options": "Meta Cloud API\nWaClient"
+  },
+  {
+   "description": "Phone Number ID from Meta Developer Console (not the phone number itself). Required for Meta Cloud API.",
+   "fieldname": "whatsapp_phone_id",
+   "fieldtype": "Data",
+   "label": "Phone Number ID",
+   "depends_on": "eval:doc.whatsapp_provider=='Meta Cloud API'"
+  },
+  {
+   "description": "Permanent access token from Meta Developer Console. Stored encrypted. Required for Meta Cloud API.",
+   "fieldname": "whatsapp_access_token",
+   "fieldtype": "Password",
+   "label": "Meta Access Token",
+   "depends_on": "eval:doc.whatsapp_provider=='Meta Cloud API'"
+  },
+  {
+   "fieldname": "column_break_wa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "http://localhost:3000",
+   "description": "Base URL of your WaClient / WPPConnect server (e.g. http://localhost:3000). Required for WaClient.",
+   "fieldname": "waclient_endpoint",
+   "fieldtype": "Data",
+   "label": "WaClient Endpoint",
+   "depends_on": "eval:doc.whatsapp_provider=='WaClient'"
+  },
+  {
+   "description": "WaClient session name (the session you started with wppconnect-server). Required for WaClient.",
+   "fieldname": "waclient_session",
+   "fieldtype": "Data",
+   "label": "WaClient Session Name",
+   "depends_on": "eval:doc.whatsapp_provider=='WaClient'"
+  },
+  {
+   "description": "WaClient secret key (set in wppconnect-server config). Stored encrypted. Leave blank if authentication is disabled.",
+   "fieldname": "waclient_api_key",
+   "fieldtype": "Password",
+   "label": "WaClient Secret Key",
+   "depends_on": "eval:doc.whatsapp_provider=='WaClient'"
   },
   {
    "fieldname": "section_execution",
@@ -114,7 +223,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-05-26 12:00:00",
+ "modified": "2026-06-23 12:00:00",
  "modified_by": "Administrator",
  "module": "FlowAgent Core",
  "name": "FlowAgent Settings",

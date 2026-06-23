@@ -9,8 +9,8 @@ if amount > 50000, then send a WhatsApp approval request" and we return
 a workflow JSON that the canvas drops directly onto the screen.
 
 This is server-side rather than browser-side because the API key cannot
-leak to the client. The Anthropic call carries a strict system prompt
-listing valid node types and a JSON schema for the response.
+leak to the client. The call uses whatever provider is configured in
+FlowAgent Settings (Anthropic, OpenAI, Google Gemini, or Ollama).
 """
 
 from __future__ import annotations
@@ -123,10 +123,9 @@ def build_from_prompt(prompt: str, model: str | None = None,
 
     Args:
         prompt: User's natural-language description.
-        model: Override the default Anthropic model.
+        model: Override the default model (uses the configured provider).
         mode: "create" (default) or "modify".
         current_workflow: JSON string of the current workflow when mode="modify".
-                          Shape: {"workflow_name", "trigger", "nodes", "edges"}.
     """
     if not (
         "System Manager" in frappe.get_roles()
@@ -135,19 +134,21 @@ def build_from_prompt(prompt: str, model: str | None = None,
         frappe.throw("Not permitted", frappe.PermissionError)
 
     from ..flowagent_core.doctype.flowagent_settings.flowagent_settings import (
-        get_anthropic_key, get_default_model,
+        get_default_provider,
+        get_default_model,
+        get_provider_key,
+        call_ai_text,
     )
-    try:
-        from anthropic import Anthropic
-    except ImportError:
-        frappe.throw("Install the anthropic package: pip install anthropic")
 
-    key = get_anthropic_key()
-    if not key:
-        frappe.throw("Set the Anthropic API key in FlowAgent Settings before using AI Build")
+    provider = get_default_provider()
+    key = get_provider_key(provider)
+    if not key and provider != "Ollama":
+        frappe.throw(
+            f"No API key configured for {provider}. "
+            "Set it in FlowAgent Settings → API Keys before using AI Build."
+        )
 
-    # Compose the system prompt — base + (optional) modify addendum carrying
-    # the current workflow.
+    # Compose the system prompt — base + (optional) modify addendum
     system_prompt = SYSTEM_PROMPT
     user_message = prompt
     if mode == "modify":
@@ -157,7 +158,6 @@ def build_from_prompt(prompt: str, model: str | None = None,
             current = json.loads(current_workflow) if isinstance(current_workflow, str) else current_workflow
         except json.JSONDecodeError:
             frappe.throw("current_workflow must be valid JSON")
-        # Trim down to just what the model needs
         trimmed = {
             "workflow_name": current.get("workflow_name", ""),
             "trigger": current.get("trigger", {}),
@@ -168,29 +168,25 @@ def build_from_prompt(prompt: str, model: str | None = None,
             current_workflow_json=json.dumps(trimmed, indent=2)
         )
 
-    client = Anthropic(api_key=key)
-    response = client.messages.create(
-        model=model or get_default_model(),
-        max_tokens=4000,  # modify mode returns the whole graph, so give it room
-        system=system_prompt,
+    raw, _ = call_ai_text(
         messages=[{"role": "user", "content": user_message}],
+        system=system_prompt,
+        model=model or get_default_model(),
+        provider=provider,
+        max_tokens=4000,
     )
-    raw = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
 
-    # Strip code fences if the model produced them despite instructions
     cleaned = _strip_fences(raw)
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError:
-        # Last-ditch: find the first {...} balanced block
         m = re.search(r"\{.*\}", cleaned, re.DOTALL)
         if not m:
             frappe.throw(f"AI returned non-JSON: {raw[:300]}")
         parsed = json.loads(m.group(0))
 
-    # Light validation — drop unknown node types so the canvas doesn't blow up
+    # Drop unknown node types so the canvas doesn't blow up
     parsed["nodes"] = [n for n in parsed.get("nodes", []) if n.get("type") in VALID_NODE_TYPES]
-    # Tell the frontend which mode we used so the canvas can react accordingly
     parsed["_mode"] = mode
     return parsed
 

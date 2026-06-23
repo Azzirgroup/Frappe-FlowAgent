@@ -54,14 +54,20 @@ class EmailNode(BaseExecutor):
 
 
 # -------------------------------------------------------------------------
-# WhatsApp (via Meta Cloud API)
+# WhatsApp — multi-provider (Meta Cloud API or WaClient)
 # -------------------------------------------------------------------------
 @node("int_whatsapp")
 class WhatsAppNode(BaseExecutor):
-    """Send a WhatsApp message via the Meta Cloud API.
+    """Send a WhatsApp message via the configured provider.
 
-    Reads credentials from FlowAgent Settings or site_config:
-      whatsapp_phone_id, whatsapp_access_token
+    Provider and credentials are set in FlowAgent Settings → WhatsApp.
+    Supported providers:
+      - Meta Cloud API  (Facebook Graph API v19.0)
+      - WaClient        (wppconnect-server self-hosted)
+
+    cfg:
+      to      — recipient phone number (with or without leading +)
+      message — text body (Jinja-rendered)
     """
 
     def run(self, *, node, cfg, context, runner):
@@ -70,30 +76,63 @@ class WhatsAppNode(BaseExecutor):
         if not (to and message):
             frappe.throw("int_whatsapp requires 'to' and 'message'")
         if runner.dry_run:
-            return {
-                "_dry_run": True,
-                "would_whatsapp": {"to": to, "message": message[:200]},
-            }
+            return {"_dry_run": True, "would_whatsapp": {"to": to, "message": message[:200]}}
 
-        phone_id = frappe.conf.get("whatsapp_phone_id")
-        token = frappe.conf.get("whatsapp_access_token")
+        from flowagent.flowagent_core.doctype.flowagent_settings.flowagent_settings import (
+            get_whatsapp_config,
+        )
+        wa = get_whatsapp_config()
+        provider = wa["provider"]
+
+        if provider == "Meta Cloud API":
+            return self._send_meta(to, message, wa["phone_id"], wa["access_token"])
+        if provider == "WaClient":
+            return self._send_waclient(to, message, wa["endpoint"], wa["session"], wa["api_key"])
+
+        frappe.throw(f"Unknown WhatsApp provider: {provider}")
+
+    # ------------------------------------------------------------------
+    def _send_meta(self, to: str, message: str, phone_id: str, token: str) -> dict:
         if not (phone_id and token):
             frappe.throw(
-                "WhatsApp credentials missing. Set whatsapp_phone_id and "
-                "whatsapp_access_token in site_config.json."
+                "Meta Cloud API credentials missing. "
+                "Set Phone Number ID and Meta Access Token in FlowAgent Settings → WhatsApp."
             )
-
         url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": to.lstrip("+"),
-            "type": "text",
-            "text": {"body": message},
-        }
         resp = requests.post(
             url,
-            json=payload,
+            json={
+                "messaging_product": "whatsapp",
+                "to": to.lstrip("+"),
+                "type": "text",
+                "text": {"body": message},
+            },
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    def _send_waclient(self, to: str, message: str,
+                       endpoint: str, session: str, api_key: str) -> dict:
+        if not (endpoint and session):
+            frappe.throw(
+                "WaClient credentials missing. "
+                "Set WaClient Endpoint and Session Name in FlowAgent Settings → WhatsApp."
+            )
+        # Normalise phone: wppconnect expects digits only with country code
+        phone = to.lstrip("+").replace(" ", "").replace("-", "")
+
+        url = f"{endpoint.rstrip('/')}/api/{session}/send-message"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        resp = requests.post(
+            url,
+            json={"phone": phone, "message": message, "isGroup": False},
+            headers=headers,
             timeout=30,
         )
         resp.raise_for_status()

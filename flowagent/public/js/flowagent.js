@@ -874,21 +874,33 @@ window.flowagent_studio_html = function () {
         </label>
         <span id="fa-trigger-indicator" class="fa-trigger-pill" title="Trigger status"></span>
         <div class="fa-spacer"></div>
-        <span id="fa-wf-name" title="Click to rename">Untitled workflow</span>
-        <button class="fa-tb-btn" data-action="save">
-            <i class="ti ti-device-floppy"></i> Save</button>
-        <label class="fa-tb-toggle fa-test-toggle" title="Dry-run mode — preview the flow without writing data or hitting external services">
-            <input type="checkbox" id="fa-test-mode-toggle">
-            <span>Test mode</span>
-        </label>
-        <button class="fa-tb-btn fa-run" data-action="run">
-            <i class="ti ti-player-play"></i> Run</button>
+        <div class="fa-tb-right">
+            <span id="fa-wf-name" title="Click to rename">Untitled workflow</span>
+            <button class="fa-tb-btn" data-action="save">
+                <i class="ti ti-device-floppy"></i> Save</button>
+            <label class="fa-tb-toggle fa-test-toggle" title="Dry-run mode — preview the flow without writing data or hitting external services">
+                <input type="checkbox" id="fa-test-mode-toggle">
+                <span>Test mode</span>
+            </label>
+            <button class="fa-tb-btn fa-run" data-action="run">
+                <i class="ti ti-player-play"></i> Run</button>
+        </div>
       </div>
 
-      <div class="fa-main">
-        <div class="fa-sidebar">${sidebarHtml}</div>
+      <div class="fa-main" id="fa-main">
+        <div class="fa-sidebar" id="fa-sidebar">
+          ${sidebarHtml}
+          <button class="fa-sidebar-toggle" id="fa-sidebar-toggle"
+                  title="Collapse palette (gives more canvas space)">
+              <i class="ti ti-layout-sidebar-left-collapse"></i>
+          </button>
+        </div>
 
         <div class="fa-canvas-wrap" id="fa-canvas-wrap">
+            <button class="fa-sidebar-open-btn" id="fa-sidebar-open-btn"
+                    title="Expand palette">
+                <i class="ti ti-chevron-right"></i>
+            </button>
             <div class="fa-canvas-grid" id="fa-canvas-grid"></div>
             <div class="fa-canvas-stage" id="fa-canvas-stage">
                 <svg class="fa-edges" id="fa-edges"></svg>
@@ -992,12 +1004,23 @@ window.flowagent_studio_html = function () {
         </div>
 
         <div class="fa-panel" id="fa-panel">
+            <!-- Vertical expand handle — only visible when panel is collapsed -->
+            <button class="fa-panel-expand-btn" id="fa-panel-expand-btn"
+                    title="Expand panel" data-action="panel-expand">
+                <i class="ti ti-layout-sidebar-right-expand"></i>
+                <span class="fa-panel-expand-label">Panel</span>
+            </button>
+
             <div class="fa-tabs">
                 <div class="fa-tab fa-tab-active" data-tab="config">Config</div>
                 <div class="fa-tab" data-tab="ai">AI Build</div>
                 <div class="fa-tab" data-tab="trace">Trace</div>
                 <div class="fa-tab" data-tab="runs">Runs</div>
                 <div class="fa-tab" data-tab="stats">Stats</div>
+                <button class="fa-panel-collapse-btn" id="fa-panel-collapse-btn"
+                        title="Collapse panel" data-action="panel-collapse">
+                    <i class="ti ti-layout-sidebar-right-collapse"></i>
+                </button>
             </div>
 
             <div class="fa-panel-pane" id="fa-pane-config">
@@ -1158,6 +1181,13 @@ function bindEvents() {
     root.querySelectorAll('.fa-tab').forEach(t => {
         t.addEventListener('click', () => switchTab(t.dataset.tab));
     });
+
+    // Sidebar collapse toggle
+    const sidebarToggle = document.getElementById('fa-sidebar-toggle');
+    if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+
+    const sidebarOpenBtn = document.getElementById('fa-sidebar-open-btn');
+    if (sidebarOpenBtn) sidebarOpenBtn.addEventListener('click', toggleSidebar);
 
     // Sidebar chips → drag start
     root.querySelectorAll('.fa-node-chip').forEach(chip => {
@@ -1579,7 +1609,37 @@ function handleAction(name, e) {
         case 'toggle-menu':       return toggleMenu(e);
         case 'save-as-template':  return saveAsTemplate();
         case 'import-template':   return importTemplateFromFile();
+        case 'panel-collapse':    return togglePanel(false);
+        case 'panel-expand':      return togglePanel(true);
+        case 'sidebar-toggle':    return toggleSidebar();
     }
+}
+
+function togglePanel(expand) {
+    const panel = document.getElementById('fa-panel');
+    if (!panel) return;
+    if (expand) {
+        panel.classList.remove('fa-panel-collapsed');
+    } else {
+        panel.classList.add('fa-panel-collapsed');
+    }
+}
+
+function toggleSidebar() {
+    const sidebar = document.getElementById('fa-sidebar');
+    const openBtn = document.getElementById('fa-sidebar-open-btn');
+    if (!sidebar) return;
+    const collapsed = sidebar.classList.toggle('fa-sidebar-collapsed');
+    const toggleBtn = document.getElementById('fa-sidebar-toggle');
+    if (toggleBtn) {
+        const icon = toggleBtn.querySelector('i');
+        if (icon) {
+            icon.className = collapsed
+                ? 'ti ti-layout-sidebar-left-expand'
+                : 'ti ti-layout-sidebar-left-collapse';
+        }
+    }
+    if (openBtn) openBtn.classList.toggle('fa-visible', collapsed);
 }
 
 // ============================================================
